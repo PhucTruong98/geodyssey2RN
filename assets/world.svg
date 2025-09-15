@@ -1,0 +1,31 @@
+<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simplified world map placeholder -->
+  <!-- North America -->
+  <path id="USA" d="M50 100 L200 100 L200 150 L180 170 L100 170 L50 150 Z" fill="#4CAF50" stroke="#2E7D32" stroke-width="1"/>
+  <path id="CAN" d="M50 50 L250 50 L250 100 L50 100 Z" fill="#81C784" stroke="#2E7D32" stroke-width="1"/>
+  <path id="MEX" d="M80 170 L180 170 L160 200 L100 200 Z" fill="#66BB6A" stroke="#2E7D32" stroke-width="1"/>
+
+  <!-- South America -->
+  <path id="BRA" d="M180 200 L250 200 L260 280 L200 300 L180 250 Z" fill="#8BC34A" stroke="#2E7D32" stroke-width="1"/>
+  <path id="ARG" d="M200 300 L220 350 L200 380 L180 350 Z" fill="#9CCC65" stroke="#2E7D32" stroke-width="1"/>
+
+  <!-- Europe -->
+  <path id="GBR" d="M380 120 L400 120 L400 140 L380 140 Z" fill="#FF9800" stroke="#E65100" stroke-width="1"/>
+  <path id="FRA" d="M400 140 L430 140 L430 170 L400 170 Z" fill="#FFB74D" stroke="#E65100" stroke-width="1"/>
+  <path id="DEU" d="M430 120 L460 120 L460 150 L430 150 Z" fill="#FFCC02" stroke="#E65100" stroke-width="1"/>
+  <path id="ESP" d="M380 170 L430 170 L430 200 L380 200 Z" fill="#FFC107" stroke="#E65100" stroke-width="1"/>
+  <path id="RUS" d="M460 50 L700 50 L700 150 L460 150 Z" fill="#FF8F00" stroke="#E65100" stroke-width="1"/>
+
+  <!-- Africa -->
+  <path id="EGY" d="M450 200 L500 200 L500 230 L450 230 Z" fill="#795548" stroke="#3E2723" stroke-width="1"/>
+  <path id="ZAF" d="M480 300 L530 300 L530 350 L480 350 Z" fill="#8D6E63" stroke="#3E2723" stroke-width="1"/>
+  <path id="NGA" d="M420 250 L470 250 L470 280 L420 280 Z" fill="#A1887F" stroke="#3E2723" stroke-width="1"/>
+
+  <!-- Asia -->
+  <path id="CHN" d="M550 120 L650 120 L650 200 L550 200 Z" fill="#E91E63" stroke="#AD1457" stroke-width="1"/>
+  <path id="IND" d="M520 200 L580 200 L580 270 L520 270 Z" fill="#F06292" stroke="#AD1457" stroke-width="1"/>
+  <path id="JPN" d="M680 150 L720 150 L720 180 L680 180 Z" fill="#EC407A" stroke="#AD1457" stroke-width="1"/>
+
+  <!-- Australia -->
+  <path id="AUS" d="M600 300 L700 300 L700 350 L600 350 Z" fill="#9C27B0" stroke="#4A148C" stroke-width="1"/>
+</svg>
