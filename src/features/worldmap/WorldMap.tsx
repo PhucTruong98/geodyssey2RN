@@ -37,7 +37,18 @@ export const WorldMap: React.FC = () => {
 
         const response = await fetch(asset.uri);
         if (response.ok) {
-          const svgText = await response.text();
+          let svgText = await response.text();
+
+          // Modify SVG to set sea (background) to light blue and land to light yellow
+          svgText = svgText
+            // Add default fill color to all path elements that don't have fill attributes
+            .replace(/<path([^>]*?)(?!.*fill)([^>]*?)>/g, '<path$1 fill="#FFFFE0"$2>')
+
+            // Add light blue background for sea
+            .replace(/<svg([^>]*)>/, '<svg$1 style="background-color:rgb(175, 235, 255);">')
+            // Also add a global fill style if no individual fills are working
+            .replace(/<svg([^>]*)>/, '<svg$1><defs><style>path { fill: #FFFFE0; stroke: #D4AC0D; stroke-width: 0.5; }</style></defs>');
+
           setSvgContent(svgText);
           console.log('SVG loaded successfully from fetch');
         } else {
@@ -97,6 +108,13 @@ export const WorldMap: React.FC = () => {
     ],
   }));
 
+  // Calculate the appropriate width to maintain aspect ratio when height = screenHeight
+  const svgOriginalWidth = 1000;
+  const svgOriginalHeight = 482;
+  const aspectRatio = svgOriginalWidth / svgOriginalHeight;
+  const mapHeight = screenHeight;
+  const mapWidth = mapHeight * aspectRatio;
+
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <GestureDetector gesture={composedGesture}>
@@ -104,8 +122,8 @@ export const WorldMap: React.FC = () => {
           {svgContent ? (
             <SvgXml
               xml={svgContent}
-              width={screenWidth}
-              height={screenHeight * 0.8}
+              width={mapWidth}
+              height={mapHeight}
             />
           ) : null}
         </Animated.View>
