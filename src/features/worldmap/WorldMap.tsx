@@ -10,7 +10,8 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { Path, Svg, Text } from 'react-native-svg';
+import { Path, Svg } from 'react-native-svg';
+import { CountryLabels } from './CountryLabels';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -309,53 +310,37 @@ export const WorldMap: React.FC = () => {
               viewBox="0 0 1000 482"
               style={styles.svgMap}
             >
-              {countryPaths.map((country) => {
-                const bbox = getPathBoundingBox(country.d);
-                const countryName = countryNames[country.id];
-
-                // Only show labels for larger countries (performance optimization)
-                const shouldShowLabel = bbox && bbox.width > 15 && bbox.height > 8;
-
-                return (
-                  <React.Fragment key={country.id}>
-                    <Path
-                      d={country.d}
-                      fill="#FFFFE0"
-                      stroke="#000000"
-                      strokeWidth="0.3"
-                      onPress={() => {
-                        console.log(`Clicked country: ${country.id}`);
-                        zoomToCountry(country.id, country.d);
-                      }}
-                      onPressIn={() => {
-                        console.log(`Press in country: ${country.id}`);
-                        zoomToCountry(country.id, country.d);
-                      }}
-                      pointerEvents="auto"
-                    />
-
-                    {shouldShowLabel && countryName && (
-                      <Text
-                        x={bbox.minX + bbox.width / 2}
-                        y={bbox.minY + bbox.height / 2}
-                        fontSize="8"
-                        fill="#333333"
-                        textAnchor="middle"
-                        alignmentBaseline="middle"
-                        fontFamily="Arial"
-                        fontWeight="500"
-                        pointerEvents="none"
-                      >
-                        {countryName}
-                      </Text>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+              {countryPaths.map((country) => (
+                <Path
+                  key={country.id}
+                  d={country.d}
+                  fill="#FFFFE0"
+                  stroke="#000000"
+                  strokeWidth="0.3"
+                  onPress={() => {
+                    console.log(`Clicked country: ${country.id}`);
+                    zoomToCountry(country.id, country.d);
+                  }}
+                  onPressIn={() => {
+                    console.log(`Press in country: ${country.id}`);
+                    zoomToCountry(country.id, country.d);
+                  }}
+                  pointerEvents="auto"
+                />
+              ))}
             </Svg>
           ) : null}
         </Animated.View>
       </GestureDetector>
+
+      {/* Country labels layer - separate from map for performance */}
+      <CountryLabels
+        countryPaths={countryPaths}
+        countryNames={countryNames}
+        animatedScale={animatedScale}
+        animatedTranslateX={animatedTranslateX}
+        animatedTranslateY={animatedTranslateY}
+      />
     </View>
   );
 };
