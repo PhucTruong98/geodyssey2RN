@@ -55,24 +55,46 @@ const AnimatedCountryLabel: React.FC<{
 
   const bbox = useMemo(() => getPathBoundingBox(country.d), [country.d]);
 
-  const animatedStyle = useAnimatedStyle(() => {
-    if (!bbox) return { opacity: 0 };
+  // Memoize expensive calculations that don't change
+  const { svgCenterX, svgCenterY, countryArea } = useMemo(() => {
+    if (!bbox) return { svgCenterX: 0, svgCenterY: 0, countryArea: 0 };
+    return {
+      svgCenterX: bbox.minX + bbox.width / 2,
+      svgCenterY: bbox.minY + bbox.height / 2,
+      countryArea: bbox.width * bbox.height
+    };
+  }, [bbox]);
 
-    // Calculate center position in SVG coordinates
-    const svgCenterX = bbox.minX + bbox.width / 2;
-    const svgCenterY = bbox.minY + bbox.height / 2;
+  const animatedStyle = useAnimatedStyle(() => {
+    if (!bbox) return { opacity: 0, transform: [{ translateX: -1000 }] };
+
+    const currentScale = animatedScale.value;
+
+    // Dynamic threshold based on zoom level - show fewer labels when zoomed out
+    const minAreaThreshold = currentScale <= 1.5 ? 800 :  // Only largest countries at low zoom
+                           currentScale <= 2.5 ? 400 :    // Medium countries at medium zoom
+                           currentScale <= 4.0 ? 200 :    // Smaller countries at high zoom
+                           100;                            // All countries at max zoom
+
+    if (countryArea < minAreaThreshold) {
+      return { opacity: 0, transform: [{ translateX: -1000 }] };
+    }
 
     // Convert SVG coordinates to screen coordinates using animated values
-    const screenX = (svgCenterX / svgOriginalWidth) * mapWidth * animatedScale.value + animatedTranslateX.value;
-    const screenY = (svgCenterY / svgOriginalHeight) * mapHeight * animatedScale.value + animatedTranslateY.value;
+    const screenX = (svgCenterX / svgOriginalWidth) * mapWidth * currentScale + animatedTranslateX.value;
+    const screenY = (svgCenterY / svgOriginalHeight) * mapHeight * currentScale + animatedTranslateY.value;
 
-    // Check if label should be visible (with buffer)
-    const buffer = 50;
-    const isVisible = screenX >= -buffer && screenX <= screenWidth + buffer &&
-                     screenY >= -buffer && screenY <= screenHeight + buffer;
+    // Viewport culling - don't render if completely outside screen
+    const buffer = 100;
+    const isInViewport = screenX >= -buffer && screenX <= screenWidth + buffer &&
+                        screenY >= -buffer && screenY <= screenHeight + buffer;
+
+    if (!isInViewport) {
+      return { opacity: 0, transform: [{ translateX: -1000 }] };
+    }
 
     return {
-      opacity: isVisible ? 1 : 0,
+      opacity: 1,
       transform: [
         { translateX: screenX - 50 }, // Center text horizontally
         { translateY: screenY - 8 },  // Center text vertically
@@ -80,8 +102,8 @@ const AnimatedCountryLabel: React.FC<{
     };
   });
 
-  // Only render labels for larger countries
-  if (!bbox || bbox.width <= 15 || bbox.height <= 8) {
+  // Early return if country is too small at minimum zoom
+  if (!bbox || bbox.width * bbox.height < 100) {
     return null;
   }
 
@@ -99,12 +121,22 @@ export const CountryLabels: React.FC<CountryLabelsProps> = ({
   animatedTranslateX,
   animatedTranslateY
 }) => {
+  // Pre-filter countries by size to avoid rendering tiny countries that will never show labels
+  const eligibleCountries = useMemo(() => {
+    return countryPaths.filter((country) => {
+      const bbox = getPathBoundingBox(country.d);
+      if (!bbox || !countryNames[country.id]) return false;
+
+      // Only include countries that could potentially show labels at some zoom level
+      const countryArea = bbox.width * bbox.height;
+      return countryArea >= 100; // Minimum area threshold
+    });
+  }, [countryPaths, countryNames]);
+
   return (
     <View style={styles.labelContainer} pointerEvents="none">
-      {countryPaths.map((country) => {
+      {eligibleCountries.map((country) => {
         const countryName = countryNames[country.id];
-        if (!countryName) return null;
-
         return (
           <AnimatedCountryLabel
             key={country.id}
