@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { Dimensions, Platform, StyleSheet, View } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 import Animated, { runOnJS, useAnimatedStyle, useDerivedValue, useSharedValue } from 'react-native-reanimated';
 
@@ -38,6 +38,24 @@ const getPathBoundingBox = (pathData: string) => {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 };
 
+// Fun colors and styling for different countries
+const getCountryStyle = (countryId: string) => {
+  const themes = [
+    { text: '#FF1493', rotation: '-2deg' }, // Deep Pink
+    { text: '#1E90FF', rotation: '1deg' },  // Dodger Blue
+    { text: '#32CD32', rotation: '-1deg' }, // Lime Green
+    { text: '#FF6347', rotation: '2deg' },  // Tomato
+    { text: '#9932CC', rotation: '-1.5deg' }, // Dark Orchid
+    { text: '#FFD700', rotation: '1.5deg' }, // Gold
+    { text: '#FF4500', rotation: '-1deg' }, // Orange Red
+    { text: '#00CED1', rotation: '1deg' },  // Dark Turquoise
+  ];
+
+  // Use country ID hash to consistently assign themes
+  const hash = countryId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return themes[hash % themes.length];
+};
+
 // Simple static label component - no hiding, only render when truly visible
 const AnimatedCountryLabel: React.FC<{
   country: { id: string; d: string };
@@ -53,6 +71,8 @@ const AnimatedCountryLabel: React.FC<{
   const mapHeight = screenHeight;
   const mapWidth = mapHeight * (svgOriginalWidth / svgOriginalHeight);
 
+  const countryTheme = getCountryStyle(country.id);
+
   const animatedStyle = useAnimatedStyle(() => {
     // Convert SVG coordinates to screen coordinates using animated values
     const screenX = (svgCenterX / svgOriginalWidth) * mapWidth * animatedScale.value + animatedTranslateX.value;
@@ -62,12 +82,21 @@ const AnimatedCountryLabel: React.FC<{
       transform: [
         { translateX: screenX - 50 }, // Center text horizontally
         { translateY: screenY - 8 },  // Center text vertically
+        { rotateZ: countryTheme.rotation }, // Add cartoony rotation
       ],
     };
   });
 
   return (
-    <Animated.Text style={[styles.countryLabel, animatedStyle]}>
+    <Animated.Text
+      style={[
+        styles.countryLabel,
+        animatedStyle,
+        {
+          color: countryTheme.text,
+        }
+      ]}
+    >
       {name}
     </Animated.Text>
   );
@@ -115,9 +144,9 @@ export const CountryLabels: React.FC<CountryLabelsProps> = ({
   // Update function to filter countries
   const updateVisibleCountries = React.useCallback((scale: number, translateX: number, translateY: number) => {
     // Dynamic threshold based on zoom level
-    const minAreaThreshold = scale <= 1.5 ? 800 :   // Only largest countries at low zoom
-                           scale <= 2.5 ? 400 :     // Medium countries at medium zoom
-                           scale <= 4.0 ? 200 :     // Smaller countries at high zoom
+    const minAreaThreshold = scale <= 1.5 ? 2000 :   // Only largest countries at low zoom
+                           scale <= 2.5 ? 1000 :     // Medium countries at medium zoom
+                           scale <= 4.0 ? 500 :     // Smaller countries at high zoom
                            100;                      // All countries at max zoom
 
     const visible = countryData.filter((country) => {
@@ -191,13 +220,23 @@ const styles = StyleSheet.create({
   countryLabel: {
     position: 'absolute',
     fontSize: 12,
-    fontWeight: '500',
-    color: '#333333',
+    fontWeight: '800', // Extra bold for cartoony feel
+    fontFamily: Platform.OS === 'ios' ? 'Chalkduster' : 'monospace', // Fun, cartoony font
     textAlign: 'center',
-    backgroundColor: 'transparent',
-    width: 100, // Fixed width for text centering
-    textShadowColor: 'rgba(255, 255, 255, 0.8)',
+    maxWidth: 120,
+
+
+    
+    // White stroke effect
+    textShadowColor: 'rgba(255, 255, 255, 0.9)',
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 2,
+    textShadowRadius: 9,
+    // Drop shadow for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 2,
+    elevation: 3,
+    
   },
 });
