@@ -1,8 +1,7 @@
-import { useMapStore } from '@/store';
 import React, { useMemo } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
-import Animated, { useAnimatedStyle, useDerivedValue } from 'react-native-reanimated';
+import { Dimensions, StyleSheet, View } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useDerivedValue, useSharedValue } from 'react-native-reanimated';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -39,73 +38,33 @@ const getPathBoundingBox = (pathData: string) => {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 };
 
-// Individual animated label component
+// Simple static label component - no hiding, only render when truly visible
 const AnimatedCountryLabel: React.FC<{
   country: { id: string; d: string };
   name: string;
+  svgCenterX: number;
+  svgCenterY: number;
   animatedScale: SharedValue<number>;
   animatedTranslateX: SharedValue<number>;
   animatedTranslateY: SharedValue<number>;
-}> = ({ country, name, animatedScale, animatedTranslateX, animatedTranslateY }) => {
+}> = ({ country, name, svgCenterX, svgCenterY, animatedScale, animatedTranslateX, animatedTranslateY }) => {
   const svgOriginalWidth = 1000;
   const svgOriginalHeight = 482;
-  const initialScale = screenHeight / 482;
   const mapHeight = screenHeight;
   const mapWidth = mapHeight * (svgOriginalWidth / svgOriginalHeight);
 
-  const bbox = useMemo(() => getPathBoundingBox(country.d), [country.d]);
-
-  // Memoize expensive calculations that don't change
-  const { svgCenterX, svgCenterY, countryArea } = useMemo(() => {
-    if (!bbox) return { svgCenterX: 0, svgCenterY: 0, countryArea: 0 };
-    return {
-      svgCenterX: bbox.minX + bbox.width / 2,
-      svgCenterY: bbox.minY + bbox.height / 2,
-      countryArea: bbox.width * bbox.height
-    };
-  }, [bbox]);
-
   const animatedStyle = useAnimatedStyle(() => {
-    if (!bbox) return { opacity: 0, transform: [{ translateX: -1000 }] };
-
-    const currentScale = animatedScale.value;
-
-    // Dynamic threshold based on zoom level - show fewer labels when zoomed out
-    const minAreaThreshold = currentScale <= 1.5 ? 800 :  // Only largest countries at low zoom
-                           currentScale <= 2.5 ? 400 :    // Medium countries at medium zoom
-                           currentScale <= 4.0 ? 200 :    // Smaller countries at high zoom
-                           100;                            // All countries at max zoom
-
-    if (countryArea < minAreaThreshold) {
-      return { opacity: 0, transform: [{ translateX: -1000 }] };
-    }
-
     // Convert SVG coordinates to screen coordinates using animated values
-    const screenX = (svgCenterX / svgOriginalWidth) * mapWidth * currentScale + animatedTranslateX.value;
-    const screenY = (svgCenterY / svgOriginalHeight) * mapHeight * currentScale + animatedTranslateY.value;
-
-    // Viewport culling - don't render if completely outside screen
-    const buffer = 100;
-    const isInViewport = screenX >= -buffer && screenX <= screenWidth + buffer &&
-                        screenY >= -buffer && screenY <= screenHeight + buffer;
-
-    if (!isInViewport) {
-      return { opacity: 0, transform: [{ translateX: -1000 }] };
-    }
+    const screenX = (svgCenterX / svgOriginalWidth) * mapWidth * animatedScale.value + animatedTranslateX.value;
+    const screenY = (svgCenterY / svgOriginalHeight) * mapHeight * animatedScale.value + animatedTranslateY.value;
 
     return {
-      opacity: 1,
       transform: [
         { translateX: screenX - 50 }, // Center text horizontally
         { translateY: screenY - 8 },  // Center text vertically
       ],
     };
   });
-
-  // Early return if country is too small at minimum zoom
-  if (!bbox || bbox.width * bbox.height < 100) {
-    return null;
-  }
 
   return (
     <Animated.Text style={[styles.countryLabel, animatedStyle]}>
@@ -121,33 +80,101 @@ export const CountryLabels: React.FC<CountryLabelsProps> = ({
   animatedTranslateX,
   animatedTranslateY
 }) => {
-  // Pre-filter countries by size to avoid rendering tiny countries that will never show labels
-  const eligibleCountries = useMemo(() => {
-    return countryPaths.filter((country) => {
-      const bbox = getPathBoundingBox(country.d);
-      if (!bbox || !countryNames[country.id]) return false;
+  const svgOriginalWidth = 1000;
+  const svgOriginalHeight = 482;
+  const mapHeight = screenHeight;
+  const mapWidth = mapHeight * (svgOriginalWidth / svgOriginalHeight);
 
-      // Only include countries that could potentially show labels at some zoom level
-      const countryArea = bbox.width * bbox.height;
-      return countryArea >= 100; // Minimum area threshold
-    });
+  // Pre-compute country data once
+  const countryData = useMemo(() => {
+    return countryPaths.map((country) => {
+      const bbox = getPathBoundingBox(country.d);
+      if (!bbox || !countryNames[country.id]) return null;
+
+      return {
+        id: country.id,
+        name: countryNames[country.id],
+        svgCenterX: bbox.minX + bbox.width / 2,
+        svgCenterY: bbox.minY + bbox.height / 2,
+        area: bbox.width * bbox.height,
+        country
+      };
+    }).filter(Boolean) as Array<{
+      id: string;
+      name: string;
+      svgCenterX: number;
+      svgCenterY: number;
+      area: number;
+      country: { id: string; d: string };
+    }>;
   }, [countryPaths, countryNames]);
+
+  // Track visible countries with state updates
+  const [renderableCountries, setRenderableCountries] = React.useState<typeof countryData>([]);
+
+  // Update function to filter countries
+  const updateVisibleCountries = React.useCallback((scale: number, translateX: number, translateY: number) => {
+    // Dynamic threshold based on zoom level
+    const minAreaThreshold = scale <= 1.5 ? 800 :   // Only largest countries at low zoom
+                           scale <= 2.5 ? 400 :     // Medium countries at medium zoom
+                           scale <= 4.0 ? 200 :     // Smaller countries at high zoom
+                           100;                      // All countries at max zoom
+
+    const visible = countryData.filter((country) => {
+      // Size filtering
+      if (country.area < minAreaThreshold) return false;
+
+      // Viewport culling
+      const screenX = (country.svgCenterX / svgOriginalWidth) * mapWidth * scale + translateX;
+      const screenY = (country.svgCenterY / svgOriginalHeight) * mapHeight * scale + translateY;
+
+      const buffer = 100;
+      return screenX >= -buffer && screenX <= screenWidth + buffer &&
+             screenY >= -buffer && screenY <= screenHeight + buffer;
+    });
+
+    setRenderableCountries(visible);
+  }, [countryData, mapWidth, svgOriginalWidth, mapHeight, svgOriginalHeight]);
+
+  // Use shared values to track when to update
+  const lastUpdateScale = useSharedValue(1);
+  const lastUpdateTranslateX = useSharedValue(0);
+  const lastUpdateTranslateY = useSharedValue(0);
+
+  // Monitor animated values and update when they change significantly
+  useDerivedValue(() => {
+    const scale = animatedScale.value;
+    const translateX = animatedTranslateX.value;
+    const translateY = animatedTranslateY.value;
+
+    // Only update if values changed significantly (throttle updates)
+    const scaleChanged = Math.abs(scale - lastUpdateScale.value) > 0.3;
+    const translateXChanged = Math.abs(translateX - lastUpdateTranslateX.value) > 200;
+    const translateYChanged = Math.abs(translateY - lastUpdateTranslateY.value) > 200;
+
+    if (scaleChanged || translateXChanged || translateYChanged) {
+      lastUpdateScale.value = scale;
+      lastUpdateTranslateX.value = translateX;
+      lastUpdateTranslateY.value = translateY;
+
+      runOnJS(updateVisibleCountries)(scale, translateX, translateY);
+    }
+  });
 
   return (
     <View style={styles.labelContainer} pointerEvents="none">
-      {eligibleCountries.map((country) => {
-        const countryName = countryNames[country.id];
-        return (
-          <AnimatedCountryLabel
-            key={country.id}
-            country={country}
-            name={countryName}
-            animatedScale={animatedScale}
-            animatedTranslateX={animatedTranslateX}
-            animatedTranslateY={animatedTranslateY}
-          />
-        );
-      })}
+      {renderableCountries.map((country) => (
+        <AnimatedCountryLabel
+          key={country.id}
+          country={country.country}
+          name={country.name}
+          svgCenterX={country.svgCenterX}
+          svgCenterY={country.svgCenterY}
+          animatedScale={animatedScale}
+          animatedTranslateX={animatedTranslateX}
+          animatedTranslateY={animatedTranslateY}
+        />
+      ))}
     </View>
   );
 };
