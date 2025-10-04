@@ -6,8 +6,7 @@ import { Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   runOnJS,
-  useSharedValue,
-  useDerivedValue
+  useSharedValue
 } from 'react-native-reanimated';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -149,58 +148,58 @@ export const SkiaWorldMap: React.FC = () => {
     console.log(`Skia zooming to country: ${countryId}`);
   };
 
-  // Gesture handling
-  const pinchGesture = Gesture.Pinch()
-    .onStart((event) => {
-      baseScale.value = gestureScale.value;
-      focalX.value = event.focalX;
-      focalY.value = event.focalY;
-      baseTranslateX.value = gestureTranslateX.value;
-      baseTranslateY.value = gestureTranslateY.value;
-    })
-    .onUpdate(event => {
-      const newScale = Math.max(minScale, Math.min(5, baseScale.value * event.scale));
-      const scaleDelta = newScale / baseScale.value;
+  // // Gesture handling
+  // const pinchGesture = Gesture.Pinch()
+  //   .onStart((event) => {
+  //     baseScale.value = gestureScale.value;
+  //     focalX.value = event.focalX;
+  //     focalY.value = event.focalY;
+  //     baseTranslateX.value = gestureTranslateX.value;
+  //     baseTranslateY.value = gestureTranslateY.value;
+  //   })
+  //   .onUpdate(event => {
+  //     const newScale = Math.max(minScale, Math.min(5, baseScale.value * event.scale));
+  //     const scaleDelta = newScale / baseScale.value;
 
-      const focalPointOffsetX = focalX.value - screenWidth / 2;
-      const focalPointOffsetY = focalY.value - screenHeight / 2;
+  //     const focalPointOffsetX = focalX.value - screenWidth / 2;
+  //     const focalPointOffsetY = focalY.value - screenHeight / 2;
 
-      const newTranslateX = baseTranslateX.value + focalPointOffsetX * (1 - scaleDelta);
-      const newTranslateY = baseTranslateY.value + focalPointOffsetY * (1 - scaleDelta);
+  //     const newTranslateX = baseTranslateX.value + focalPointOffsetX * (1 - scaleDelta);
+  //     const newTranslateY = baseTranslateY.value + focalPointOffsetY * (1 - scaleDelta);
 
-      const scaledMapWidth = mapWidth * newScale;
-      const scaledMapHeight = mapHeight * newScale;
+  //     const scaledMapWidth = mapWidth * newScale;
+  //     const scaledMapHeight = mapHeight * newScale;
 
-      const maxTranslateX = Math.max(0, (scaledMapWidth - screenWidth) / 2);
-      const maxTranslateY = Math.max(0, (scaledMapHeight - screenHeight) / 2);
+  //     const maxTranslateX = Math.max(0, (scaledMapWidth - screenWidth) / 2);
+  //     const maxTranslateY = Math.max(0, (scaledMapHeight - screenHeight) / 2);
 
-      const constrainedX = Math.max(-maxTranslateX, Math.min(maxTranslateX, newTranslateX));
-      const constrainedY = Math.max(-maxTranslateY, Math.min(maxTranslateY, newTranslateY));
+  //     const constrainedX = Math.max(-maxTranslateX, Math.min(maxTranslateX, newTranslateX));
+  //     const constrainedY = Math.max(-maxTranslateY, Math.min(maxTranslateY, newTranslateY));
 
-      // Update gesture values and trigger React re-render
-      gestureScale.value = newScale;
-      gestureTranslateX.value = constrainedX;
-      gestureTranslateY.value = constrainedY;
+  //     // Update gesture values and trigger React re-render
+  //     gestureScale.value = newScale;
+  //     gestureTranslateX.value = constrainedX;
+  //     gestureTranslateY.value = constrainedY;
 
-      // Update React state for rendering - but only occasionally to avoid overhead
-      runOnJS(setSkiaScale)(newScale);
-      runOnJS(setSkiaTranslateX)(constrainedX);
-      runOnJS(setSkiaTranslateY)(constrainedY);
-    })
-    .onEnd(() => {
-      const finalScale = gestureScale.value;
-      const finalX = gestureTranslateX.value;
-      const finalY = gestureTranslateY.value;
+  //     // Update React state for rendering - but only occasionally to avoid overhead
+  //     runOnJS(setSkiaScale)(newScale);
+  //     runOnJS(setSkiaTranslateX)(constrainedX);
+  //     runOnJS(setSkiaTranslateY)(constrainedY);
+  //   })
+  //   .onEnd(() => {
+  //     const finalScale = gestureScale.value;
+  //     const finalX = gestureTranslateX.value;
+  //     const finalY = gestureTranslateY.value;
 
-      // Update base values for next gesture
-      baseTranslateX.value = finalX;
-      baseTranslateY.value = finalY;
-      baseScale.value = finalScale;
+  //     // Update base values for next gesture
+  //     baseTranslateX.value = finalX;
+  //     baseTranslateY.value = finalY;
+  //     baseScale.value = finalScale;
 
-      // Update store only at the end
-      runOnJS(setScale)(finalScale);
-      runOnJS(setTranslate)(finalX, finalY);
-    });
+  //     // Update store only at the end
+  //     runOnJS(setScale)(finalScale);
+  //     runOnJS(setTranslate)(finalX, finalY);
+  //   });
 
   const panGesture = Gesture.Pan()
     .onStart(() => {
@@ -238,7 +237,7 @@ export const SkiaWorldMap: React.FC = () => {
       runOnJS(setTranslate)(finalX, finalY);
     });
 
-  const composedGesture = Gesture.Race(Gesture.Simultaneous(pinchGesture, panGesture));
+  const composedGesture = Gesture.Race(Gesture.Simultaneous( panGesture));
 
   return (
     <GestureDetector gesture={composedGesture}>
@@ -256,25 +255,12 @@ export const SkiaWorldMap: React.FC = () => {
             color="rgb(109, 204, 236)"
           />
 
-          {/* Render countries */}
+          {/* Render countries - fill first, then stroke */}
           {countryPaths.map((country) => (
-            <Path
-              key={country.id}
-              path={country.path}
-              color="#FFFFE0"
-              style="fill"
-            />
-          ))}
-
-          {/* Country borders */}
-          {countryPaths.map((country) => (
-            <Path
-              key={`${country.id}-border`}
-              path={country.path}
-              color="#000000"
-              style="stroke"
-              strokeWidth={0.3}
-            />
+            <React.Fragment key={country.id}>
+              <Path path={country.path} color="#FFFFE0" style="fill" />
+              <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.3} />
+            </React.Fragment>
           ))}
         </Group>
       </Canvas>

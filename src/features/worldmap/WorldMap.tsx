@@ -1,17 +1,76 @@
 import { useTheme } from '@/hooks';
 import { useMapStore } from '@/store';
 import { Asset } from 'expo-asset';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Dimensions, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  interpolateColor,
   runOnJS,
+  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withRepeat,
+  withSequence,
+  withTiming
 } from 'react-native-reanimated';
 import { Path, Svg } from 'react-native-svg';
 import { CountryLabels } from './CountryLabels';
+
+// Create animated versions for flickering effect and dynamic sizing
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const AnimatedSvg = Animated.createAnimatedComponent(Svg);
+
+// Simple static country component
+const StaticCountry: React.FC<{
+  country: { id: string; d: string };
+  fillColor: string;
+  onPress: () => void;
+}> = ({ country, fillColor, onPress }) => {
+  return (
+    <Path
+      key={country.id}
+      d={country.d}
+      fill={fillColor}
+      stroke="#000000"
+      strokeWidth="0.3"
+      onPress={onPress}
+      onPressIn={onPress}
+      pointerEvents="auto"
+    />
+  );
+};
+
+// Animated country component only for selected country
+const AnimatedCountry: React.FC<{
+  country: { id: string; d: string };
+  flickerValue: Animated.SharedValue<number>;
+  onPress: () => void;
+}> = ({ country, flickerValue, onPress }) => {
+  const animatedProps = useAnimatedProps(() => {
+    'worklet';
+    // Interpolate between red and green for flickering effect on UI thread
+    const color = interpolateColor(
+      flickerValue.value,
+      [0, 1],
+      ['#FF6B6B', '#4ECDC4'] // Red to turquoise/green
+    );
+    return { fill: color };
+  });
+
+  return (
+    <AnimatedPath
+      key={country.id}
+      d={country.d}
+      animatedProps={animatedProps}
+      stroke="#000000"
+      strokeWidth="0.3"
+      onPress={onPress}
+      onPressIn={onPress}
+      pointerEvents="auto"
+    />
+  );
+};
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -40,6 +99,10 @@ export const WorldMap: React.FC = () => {
   const { scale, translateX, translateY, setScale, setTranslate } = useMapStore();
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string}[]>([]);
   const [countryNames, setCountryNames] = useState<{[key: string]: string}>({});
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+
+  // Animation value for flickering effect
+  const flickerAnimation = useSharedValue(0);
 
   const animatedScale = useSharedValue(Math.max(scale, 1.0)); // Ensure initial scale respects minimum
   const animatedTranslateX = useSharedValue(translateX);
@@ -64,6 +127,35 @@ export const WorldMap: React.FC = () => {
 
     // Calculate minimum scale to ensure map height never goes below screen height
     const minScale = 1.0; // Since mapHeight = screenHeight, minimum scale is 1.0
+
+    // Function to handle country selection with flickering animation
+    const handleCountryPress = (countryId: string, pathData: string) => {
+      // Update selected country
+      setSelectedCountry(countryId);
+
+      // Start flickering animation (red -> green -> red continuously)
+      flickerAnimation.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 500 }), // Red to green
+          withTiming(0, { duration: 500 })  // Green back to red
+        ),
+        -1, // Infinite repeat
+        false // Don't reverse
+      );
+
+      console.log(`Selected country: ${countryNames[countryId] || countryId}`);
+
+      // Zoom to country
+      zoomToCountry(countryId, pathData);
+    };
+
+    const onCountryPress = useCallback((id: string, d: string) => {
+      console.log(`Clicked country: ${id}`);
+      handleCountryPress(id, d);
+    }, [handleCountryPress]);
+
+
+
 
     // Function to zoom to a specific country
     const zoomToCountry = (countryId: string, pathData: string) => {
@@ -125,10 +217,19 @@ export const WorldMap: React.FC = () => {
       console.log(`Zooming to country: ${countryId}`);
     };
 
+
+    const pressHandlers = useMemo(() => {
+      const map = new Map();
+      for (const c of countryPaths) {
+        map.set(c.id, () => onCountryPress(c.id, c.d));
+      }
+      return map;
+    }, [countryPaths, onCountryPress]);
+
   useEffect(() => {
     const loadMapData = async () => {
       try {
-        // Load SVG paths
+        // Load higher resolution SVG paths (2x version)
         const svgUrl = require('../../../assets/world-map.svg');
         const asset = Asset.fromModule(svgUrl);
         await asset.downloadAsync();
@@ -286,48 +387,66 @@ export const WorldMap: React.FC = () => {
 
   const composedGesture = Gesture.Race(Gesture.Simultaneous(pinchGesture, panGesture));
 
+  // Instead of scaling with transform, we'll translate and resize with width/height
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: animatedTranslateX.value },
       { translateY: animatedTranslateY.value },
-      { scale: animatedScale.value },
     ],
-    transformOrigin: 'top left',
+    width: mapWidth * animatedScale.value,
+    height: mapHeight * animatedScale.value,
   }));
-
-
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <GestureDetector gesture={composedGesture}>
-        <Animated.View style={[styles.mapContainer, animatedStyle]}>
+        <Animated.View style={[styles.mapContainer, animatedStyle]}
+
+        >
           {/* Ocean background canvas */}
-          <View style={[styles.oceanBackground, { width: mapWidth, height: mapHeight }]} />
+          <View style={[styles.oceanBackground, { width: '100%', height: '100%' }]} />
           {countryPaths.length > 0 ? (
             <Svg
-              width={mapWidth}
-              height={mapHeight}
+              width="100%"
+              height="100%"
               viewBox="0 0 1000 482"
               style={styles.svgMap}
             >
-              {countryPaths.map((country) => (
-                <Path
-                  key={country.id}
-                  d={country.d}
-                  fill="#FFFFE0"
-                  stroke="#000000"
-                  strokeWidth="0.3"
-                  onPress={() => {
-                    console.log(`Clicked country: ${country.id}`);
-                    zoomToCountry(country.id, country.d);
-                  }}
-                  onPressIn={() => {
-                    console.log(`Press in country: ${country.id}`);
-                    zoomToCountry(country.id, country.d);
-                  }}
-                  pointerEvents="auto"
-                />
-              ))}
+              {countryPaths.map((country) => {
+                const isSelected = selectedCountry === country.id;
+
+                if (isSelected) {
+                  // Only the selected country gets the expensive animated component
+                  return (
+                    <AnimatedCountry
+                      key={country.id}
+                      country={country}
+                      flickerValue={flickerAnimation}
+                      onPress={() => {
+                        console.log(`Clicked country: ${country.id}`);
+                        // handleCountryPress(country.id, country.d);
+                        onCountryPress(country.id, country.d)
+                        
+                      }}
+                    />
+                  );
+                } else {
+                  // All other countries use simple static components
+                  return (
+                    <StaticCountry
+                      key={country.id}
+                      country={country}
+                      fillColor="#FFFFE0"
+                      onPress={() => {
+                        console.log(`Clicked country: ${country.id}`);
+                        // handleCountryPress(country.id, country.d);
+                        onCountryPress(country.id, country.d)
+
+                      }}
+                    />
+                  );
+                }
+              })}
             </Svg>
           ) : null}
         </Animated.View>
