@@ -6,6 +6,7 @@ import { Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   runOnJS,
+  useDerivedValue,
   useSharedValue
 } from 'react-native-reanimated';
 
@@ -34,15 +35,10 @@ export const SkiaWorldMap: React.FC = () => {
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any}[]>([]);
   const [countryNames, setCountryNames] = useState<{[key: string]: string}>({});
 
-  // Use React state for Skia rendering
-  const [skiaScale, setSkiaScale] = useState(Math.max(scale, 1.0));
-  const [skiaTranslateX, setSkiaTranslateX] = useState(translateX);
-  const [skiaTranslateY, setSkiaTranslateY] = useState(translateY);
-
-  // Shared values for gesture calculations
-  const gestureScale = useSharedValue(Math.max(scale, 1.0));
-  const gestureTranslateX = useSharedValue(translateX);
-  const gestureTranslateY = useSharedValue(translateY);
+  // Use shared values for UI thread rendering
+  const skiaScale = useSharedValue(Math.max(scale, 1.0));
+  const skiaTranslateX = useSharedValue(translateX);
+  const skiaTranslateY = useSharedValue(translateY);
 
   const baseScale = useSharedValue(1);
   const baseTranslateX = useSharedValue(translateX);
@@ -63,7 +59,9 @@ export const SkiaWorldMap: React.FC = () => {
     const loadMapData = async () => {
       try {
         // Load SVG paths
-        const svgUrl = require('../../../assets/world-map.svg');
+        // const svgUrl = require('../../../assets/world-map.svg');
+        const svgUrl = require('../../../assets/simWorldMap.svg');
+
         const asset = Asset.fromModule(svgUrl);
         await asset.downloadAsync();
 
@@ -128,14 +126,10 @@ export const SkiaWorldMap: React.FC = () => {
     const translateX = -bbox.minX * initialScale * newScale;
     const translateY = -bbox.minY * initialScale * newScale;
 
-    // Update both React state and gesture values
-    setSkiaScale(newScale);
-    setSkiaTranslateX(translateX);
-    setSkiaTranslateY(translateY);
-
-    gestureScale.value = newScale;
-    gestureTranslateX.value = translateX;
-    gestureTranslateY.value = translateY;
+    // Update shared values directly
+    skiaScale.value = newScale;
+    skiaTranslateX.value = translateX;
+    skiaTranslateY.value = translateY;
 
     // Update base values
     baseTranslateX.value = translateX;
@@ -148,66 +142,60 @@ export const SkiaWorldMap: React.FC = () => {
     console.log(`Skia zooming to country: ${countryId}`);
   };
 
-  // // Gesture handling
-  // const pinchGesture = Gesture.Pinch()
-  //   .onStart((event) => {
-  //     baseScale.value = gestureScale.value;
-  //     focalX.value = event.focalX;
-  //     focalY.value = event.focalY;
-  //     baseTranslateX.value = gestureTranslateX.value;
-  //     baseTranslateY.value = gestureTranslateY.value;
-  //   })
-  //   .onUpdate(event => {
-  //     const newScale = Math.max(minScale, Math.min(5, baseScale.value * event.scale));
-  //     const scaleDelta = newScale / baseScale.value;
+  const pinchGesture = Gesture.Pinch()
+    .onStart((event) => {
+      baseScale.value = skiaScale.value;
+      focalX.value = event.focalX;
+      focalY.value = event.focalY;
+      baseTranslateX.value = skiaTranslateX.value;
+      baseTranslateY.value = skiaTranslateY.value;
+    })
+    .onUpdate(event => {
+      const newScale = Math.max(minScale, Math.min(5, baseScale.value * event.scale));
+      const scaleDelta = newScale / baseScale.value;
 
-  //     const focalPointOffsetX = focalX.value - screenWidth / 2;
-  //     const focalPointOffsetY = focalY.value - screenHeight / 2;
+      const focalPointOffsetX = focalX.value - screenWidth / 2;
+      const focalPointOffsetY = focalY.value - screenHeight / 2;
 
-  //     const newTranslateX = baseTranslateX.value + focalPointOffsetX * (1 - scaleDelta);
-  //     const newTranslateY = baseTranslateY.value + focalPointOffsetY * (1 - scaleDelta);
+      const newTranslateX = baseTranslateX.value + focalPointOffsetX * (1 - scaleDelta);
+      const newTranslateY = baseTranslateY.value + focalPointOffsetY * (1 - scaleDelta);
 
-  //     const scaledMapWidth = mapWidth * newScale;
-  //     const scaledMapHeight = mapHeight * newScale;
+      const scaledMapWidth = mapWidth * newScale;
+      const scaledMapHeight = mapHeight * newScale;
 
-  //     const maxTranslateX = Math.max(0, (scaledMapWidth - screenWidth) / 2);
-  //     const maxTranslateY = Math.max(0, (scaledMapHeight - screenHeight) / 2);
+      const maxTranslateX = Math.max(0, (scaledMapWidth - screenWidth) / 2);
+      const maxTranslateY = Math.max(0, (scaledMapHeight - screenHeight) / 2);
 
-  //     const constrainedX = Math.max(-maxTranslateX, Math.min(maxTranslateX, newTranslateX));
-  //     const constrainedY = Math.max(-maxTranslateY, Math.min(maxTranslateY, newTranslateY));
+      const constrainedX = Math.max(-maxTranslateX, Math.min(maxTranslateX, newTranslateX));
+      const constrainedY = Math.max(-maxTranslateY, Math.min(maxTranslateY, newTranslateY));
 
-  //     // Update gesture values and trigger React re-render
-  //     gestureScale.value = newScale;
-  //     gestureTranslateX.value = constrainedX;
-  //     gestureTranslateY.value = constrainedY;
+      // Update shared values directly on UI thread
+      skiaScale.value = newScale;
+      skiaTranslateX.value = constrainedX;
+      skiaTranslateY.value = constrainedY;
+    })
+    .onEnd(() => {
+      const finalScale = skiaScale.value;
+      const finalX = skiaTranslateX.value;
+      const finalY = skiaTranslateY.value;
 
-  //     // Update React state for rendering - but only occasionally to avoid overhead
-  //     runOnJS(setSkiaScale)(newScale);
-  //     runOnJS(setSkiaTranslateX)(constrainedX);
-  //     runOnJS(setSkiaTranslateY)(constrainedY);
-  //   })
-  //   .onEnd(() => {
-  //     const finalScale = gestureScale.value;
-  //     const finalX = gestureTranslateX.value;
-  //     const finalY = gestureTranslateY.value;
+      // Update base values for next gesture
+      baseTranslateX.value = finalX;
+      baseTranslateY.value = finalY;
+      baseScale.value = finalScale;
 
-  //     // Update base values for next gesture
-  //     baseTranslateX.value = finalX;
-  //     baseTranslateY.value = finalY;
-  //     baseScale.value = finalScale;
-
-  //     // Update store only at the end
-  //     runOnJS(setScale)(finalScale);
-  //     runOnJS(setTranslate)(finalX, finalY);
-  //   });
+      // Update store only at the end
+      runOnJS(setScale)(finalScale);
+      runOnJS(setTranslate)(finalX, finalY);
+    });
 
   const panGesture = Gesture.Pan()
     .onStart(() => {
-      baseTranslateX.value = gestureTranslateX.value;
-      baseTranslateY.value = gestureTranslateY.value;
+      baseTranslateX.value = skiaTranslateX.value;
+      baseTranslateY.value = skiaTranslateY.value;
     })
     .onUpdate(event => {
-      const currentScale = gestureScale.value;
+      const currentScale = skiaScale.value;
       const scaledMapWidth = mapWidth * currentScale;
       const scaledMapHeight = mapHeight * currentScale;
 
@@ -220,16 +208,13 @@ export const SkiaWorldMap: React.FC = () => {
       const constrainedX = Math.min(0, Math.max(-maxTranslateX, newTranslateX));
       const constrainedY = Math.min(0, Math.max(-maxTranslateY, newTranslateY));
 
-      // Update gesture values and React state
-      gestureTranslateX.value = constrainedX;
-      gestureTranslateY.value = constrainedY;
-
-      runOnJS(setSkiaTranslateX)(constrainedX);
-      runOnJS(setSkiaTranslateY)(constrainedY);
+      // Update shared values directly on UI thread
+      skiaTranslateX.value = constrainedX;
+      skiaTranslateY.value = constrainedY;
     })
     .onEnd(() => {
-      const finalX = gestureTranslateX.value;
-      const finalY = gestureTranslateY.value;
+      const finalX = skiaTranslateX.value;
+      const finalY = skiaTranslateY.value;
 
       baseTranslateX.value = finalX;
       baseTranslateY.value = finalY;
@@ -237,18 +222,21 @@ export const SkiaWorldMap: React.FC = () => {
       runOnJS(setTranslate)(finalX, finalY);
     });
 
-  const composedGesture = Gesture.Race(Gesture.Simultaneous( panGesture));
+  const composedGesture = Gesture.Race(Gesture.Simultaneous(pinchGesture, panGesture));
+
+  // Use useDerivedValue to create transform array on UI thread
+  const transform = useDerivedValue(() => {
+    return [
+      { translateX: skiaTranslateX.value },
+      { translateY: skiaTranslateY.value },
+      { scale: skiaScale.value },
+    ];
+  }, []);
 
   return (
     <GestureDetector gesture={composedGesture}>
       <Canvas style={{ flex: 1 }}>
-        <Group
-          transform={[
-            { translateX: skiaTranslateX },
-            { translateY: skiaTranslateY },
-            { scale: skiaScale },
-          ]}
-        >
+        <Group transform={transform}>
           {/* Ocean background */}
           <Path
             path="M0,0 L1000,0 L1000,482 L0,482 Z"
