@@ -1,5 +1,5 @@
 import { useMapStore } from '@/store';
-import { Canvas, Group, Path, Skia } from '@shopify/react-native-skia';
+import { Canvas, Group, Path, Skia, matchFont } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
 import React, { useEffect, useState } from 'react';
 import { Dimensions } from 'react-native';
@@ -35,6 +35,18 @@ export const SkiaWorldMap: React.FC = () => {
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any}[]>([]);
   const [countryNames, setCountryNames] = useState<{[key: string]: string}>({});
 
+
+
+  
+  // FPS tracking
+  const [fps, setFps] = useState(60);
+  const lastFrameTime = useSharedValue(Date.now());
+  const frameCount = useSharedValue(0);
+  const fpsUpdateInterval = useSharedValue(Date.now());
+
+  // Render mode for testing (0 = both, 1 = fill only, 2 = stroke only)
+  const [renderMode, setRenderMode] = useState(0);
+
   // Use shared values for UI thread rendering
   const skiaScale = useSharedValue(Math.max(scale, 1.0));
   const skiaTranslateX = useSharedValue(translateX);
@@ -59,8 +71,8 @@ export const SkiaWorldMap: React.FC = () => {
     const loadMapData = async () => {
       try {
         // Load SVG paths
-        // const svgUrl = require('../../../assets/world-map.svg');
-        const svgUrl = require('../../../assets/simWorldMap.svg');
+        const svgUrl = require('../../../assets/world-map.svg');
+        // const svgUrl = require('../../../assets/simWorldMap.svg');
 
         const asset = Asset.fromModule(svgUrl);
         await asset.downloadAsync();
@@ -226,12 +238,45 @@ export const SkiaWorldMap: React.FC = () => {
 
   // Use useDerivedValue to create transform array on UI thread
   const transform = useDerivedValue(() => {
+    // Calculate FPS
+    const now = Date.now();
+    const delta = now - lastFrameTime.value;
+    lastFrameTime.value = now;
+    frameCount.value++;
+
+    // Update FPS every 500ms
+    if (now - fpsUpdateInterval.value > 500) {
+      const currentFps = Math.round((frameCount.value * 1000) / (now - fpsUpdateInterval.value));
+      runOnJS(setFps)(currentFps);
+      frameCount.value = 0;
+      fpsUpdateInterval.value = now;
+    }
+
     return [
       { translateX: skiaTranslateX.value },
       { translateY: skiaTranslateY.value },
       { scale: skiaScale.value },
     ];
   }, []);
+
+  // Font for FPS display
+  const font = matchFont({
+    fontSize: 16,
+    fontWeight: 'bold',
+  });
+
+  // Derived values for display text (update with FPS)
+  const fpsText = useDerivedValue(() => {
+    return `FPS: ${fps}`;
+  }, [fps]);
+
+  const zoomText = useDerivedValue(() => {
+    return `Zoom: ${skiaScale.value.toFixed(2)}x`;
+  }, []);
+
+  const pathCountText = useDerivedValue(() => {
+    return `Paths: ${countryPaths.length}`;
+  }, [countryPaths.length]);
 
   return (
     <GestureDetector gesture={composedGesture}>
@@ -243,13 +288,19 @@ export const SkiaWorldMap: React.FC = () => {
             color="rgb(109, 204, 236)"
           />
 
-          {/* Render countries - fill first, then stroke */}
+          {/* Render countries based on render mode */}
           {countryPaths.map((country) => (
             <React.Fragment key={country.id}>
-              <Path path={country.path} color="#FFFFE0" style="fill" />
-              <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.3} />
+              {renderMode !== 2 && <Path path={country.path} color="#FFFFE0" style="fill" />}
+              {/* {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.05} />} */}
+
+
             </React.Fragment>
           ))}
+
+
+
+
         </Group>
       </Canvas>
     </GestureDetector>
