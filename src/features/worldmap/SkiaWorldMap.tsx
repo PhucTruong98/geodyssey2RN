@@ -33,7 +33,7 @@ const getPathBoundingBox = (pathData: string) => {
 
 export const SkiaWorldMap: React.FC = () => {
   const { scale, translateX, translateY, setScale, setTranslate } = useMapStore();
-  const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any}[]>([]);
+  const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any, bbox: any}[]>([]);
   const [countryNames, setCountryNames] = useState<{[key: string]: string}>({});
 
 
@@ -84,7 +84,7 @@ export const SkiaWorldMap: React.FC = () => {
         if (response.ok) {
           const svgText = await response.text();
           const lines = svgText.split('\n');
-          const paths: {id: string, d: string, path: any}[] = [];
+          const paths: {id: string, d: string, path: any, bbox: any}[] = [];
 
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
@@ -98,7 +98,9 @@ export const SkiaWorldMap: React.FC = () => {
                 // Convert SVG path to Skia path
                 const skiaPath = Skia.Path.MakeFromSVGString(pathData);
                 if (skiaPath) {
-                  paths.push({ id: countryId, d: pathData, path: skiaPath });
+                  // Calculate bounding box for viewport culling
+                  const bbox = getPathBoundingBox(pathData);
+                  paths.push({ id: countryId, d: pathData, path: skiaPath, bbox });
                 }
               }
             }
@@ -324,6 +326,43 @@ export const SkiaWorldMap: React.FC = () => {
     return `Paths: ${countryPaths.length}`;
   }, [countryPaths.length]);
 
+  // Filter visible countries using viewport culling
+  const [visibleCountries, setVisibleCountries] = useState(countryPaths);
+
+  useEffect(() => {
+    const checkVisibility = () => {
+      const currentScale = skiaScale.value;
+      const currentTranslateX = skiaTranslateX.value;
+      const currentTranslateY = skiaTranslateY.value;
+
+      const visible = countryPaths.filter(country => {
+        if (!country.bbox) return true; // Render if no bbox
+
+        // Transform country bbox to screen coordinates
+        const countryScreenMinX = country.bbox.minX * currentScale + currentTranslateX;
+        const countryScreenMaxX = country.bbox.maxX * currentScale + currentTranslateX;
+        const countryScreenMinY = country.bbox.minY * currentScale + currentTranslateY;
+        const countryScreenMaxY = country.bbox.maxY * currentScale + currentTranslateY;
+
+        // Check if country bbox intersects with screen viewport
+        const intersects = !(
+          countryScreenMaxX < 0 || // completely left of screen
+          countryScreenMinX > screenWidth || // completely right of screen
+          countryScreenMaxY < 0 || // completely above screen
+          countryScreenMinY > screenHeight // completely below screen
+        );
+
+        return intersects;
+      });
+
+      setVisibleCountries(visible);
+    };
+
+    // Check on every animation frame
+    const interval = setInterval(checkVisibility, 15); // ~60fps
+    return () => clearInterval(interval);
+  }, [countryPaths]);
+
   return (
     <GestureDetector gesture={composedGesture}>
       <Canvas style={{ flex: 1 }}>
@@ -335,7 +374,7 @@ export const SkiaWorldMap: React.FC = () => {
           />
 
           {/* Render countries based on render mode */}
-          {countryPaths.map((country) => (
+          {visibleCountries.map((country) => (
             <React.Fragment key={country.id}>
               {renderMode !== 2 && <Path path={country.path} color="#FFFFE0" style="fill" />}
               {/* {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.1} />} */}
