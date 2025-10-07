@@ -160,21 +160,22 @@ export const SkiaWorldMap: React.FC = () => {
   const pinchGesture = Gesture.Pinch()
     .onStart((event) => {
       baseScale.value = skiaScale.value;
-      focalX.value = event.focalX;
-      focalY.value = event.focalY;
       baseTranslateX.value = skiaTranslateX.value;
       baseTranslateY.value = skiaTranslateY.value;
+      focalX.value = event.focalX;
+      focalY.value = event.focalY;
     })
     .onUpdate(event => {
       // Constrain zoom: minimum is initialScale, maximum is 5x
       const newScale = Math.max(initialScale, Math.min(5, baseScale.value * event.scale));
-      const scaleDelta = newScale / baseScale.value;
 
-      const focalPointOffsetX = focalX.value - screenWidth / 2;
-      const focalPointOffsetY = focalY.value - screenHeight / 2;
+      // Calculate the focal point position in map coordinates using the base values from onStart
+      const mapPointX = (focalX.value - baseTranslateX.value) / baseScale.value;
+      const mapPointY = (focalY.value - baseTranslateY.value) / baseScale.value;
 
-      const newTranslateX = baseTranslateX.value + focalPointOffsetX * (1 - scaleDelta);
-      const newTranslateY = baseTranslateY.value + focalPointOffsetY * (1 - scaleDelta);
+      // New translation to keep the focal point fixed on screen
+      const newTranslateX = focalX.value - mapPointX * newScale;
+      const newTranslateY = focalY.value - mapPointY * newScale;
 
       // Calculate actual rendered map dimensions (SVG size * scale)
       const scaledMapWidth = svgOriginalWidth * newScale;
@@ -210,6 +211,7 @@ export const SkiaWorldMap: React.FC = () => {
     });
 
   const panGesture = Gesture.Pan()
+    .maxPointers(1)
     .onStart(() => {
       baseTranslateX.value = skiaTranslateX.value;
       baseTranslateY.value = skiaTranslateY.value;
@@ -278,7 +280,7 @@ export const SkiaWorldMap: React.FC = () => {
       baseTranslateY.value = skiaTranslateY.value;
     });
 
-  const composedGesture = Gesture.Race(Gesture.Simultaneous(pinchGesture, panGesture));
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
 
   // Use useDerivedValue to create transform array on UI thread
   const transform = useDerivedValue(() => {
