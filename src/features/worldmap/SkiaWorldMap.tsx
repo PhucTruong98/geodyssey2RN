@@ -7,7 +7,8 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   runOnJS,
   useDerivedValue,
-  useSharedValue
+  useSharedValue,
+  withDecay
 } from 'react-native-reanimated';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -68,6 +69,8 @@ export const SkiaWorldMap: React.FC = () => {
 
   // Load map data and convert to Skia paths
   useEffect(() => {
+    //set initial scale for map
+    skiaScale.value = initialScale;
     const loadMapData = async () => {
       try {
         // Load SVG paths
@@ -163,7 +166,8 @@ export const SkiaWorldMap: React.FC = () => {
       baseTranslateY.value = skiaTranslateY.value;
     })
     .onUpdate(event => {
-      const newScale = Math.max(minScale, Math.min(5, baseScale.value * event.scale));
+      // Constrain zoom: minimum is initialScale, maximum is 5x
+      const newScale = Math.max(initialScale, Math.min(5, baseScale.value * event.scale));
       const scaleDelta = newScale / baseScale.value;
 
       const focalPointOffsetX = focalX.value - screenWidth / 2;
@@ -172,14 +176,18 @@ export const SkiaWorldMap: React.FC = () => {
       const newTranslateX = baseTranslateX.value + focalPointOffsetX * (1 - scaleDelta);
       const newTranslateY = baseTranslateY.value + focalPointOffsetY * (1 - scaleDelta);
 
-      const scaledMapWidth = mapWidth * newScale;
-      const scaledMapHeight = mapHeight * newScale;
+      // Calculate actual rendered map dimensions (SVG size * scale)
+      const scaledMapWidth = svgOriginalWidth * newScale;
+      const scaledMapHeight = svgOriginalHeight * newScale;
 
-      const maxTranslateX = Math.max(0, (scaledMapWidth - screenWidth) / 2);
-      const maxTranslateY = Math.max(0, (scaledMapHeight - screenHeight) / 2);
+      // Calculate proper boundaries
+      const minTranslateX = screenWidth - scaledMapWidth;
+      const maxTranslateX = 0;
+      const minTranslateY = screenHeight - scaledMapHeight;
+      const maxTranslateY = 0;
 
-      const constrainedX = Math.max(-maxTranslateX, Math.min(maxTranslateX, newTranslateX));
-      const constrainedY = Math.max(-maxTranslateY, Math.min(maxTranslateY, newTranslateY));
+      const constrainedX = Math.max(minTranslateX, Math.min(maxTranslateX, newTranslateX));
+      const constrainedY = Math.max(minTranslateY, Math.min(maxTranslateY, newTranslateY));
 
       // Update shared values directly on UI thread
       skiaScale.value = newScale;
@@ -208,30 +216,66 @@ export const SkiaWorldMap: React.FC = () => {
     })
     .onUpdate(event => {
       const currentScale = skiaScale.value;
-      const scaledMapWidth = mapWidth * currentScale;
-      const scaledMapHeight = mapHeight * currentScale;
 
-      const maxTranslateX = Math.max(0, (scaledMapWidth - screenWidth));
-      const maxTranslateY = Math.max(0, (scaledMapHeight - screenHeight));
+      // Calculate actual rendered map dimensions (SVG size * scale)
+      const scaledMapWidth = svgOriginalWidth * currentScale;
+      const scaledMapHeight = svgOriginalHeight * currentScale;
 
       const newTranslateX = baseTranslateX.value + event.translationX;
       const newTranslateY = baseTranslateY.value + event.translationY;
 
-      const constrainedX = Math.min(0, Math.max(-maxTranslateX, newTranslateX));
-      const constrainedY = Math.min(0, Math.max(-maxTranslateY, newTranslateY));
+      // Calculate proper boundaries
+      // Map left edge should not go past screen right edge
+      const minTranslateX = screenWidth - scaledMapWidth;
+      // Map right edge should not go past screen left edge
+      const maxTranslateX = 0;
+
+      // Map top edge should not go past screen bottom edge
+      const minTranslateY = screenHeight - scaledMapHeight;
+      // Map bottom edge should not go past screen top edge
+      const maxTranslateY = 0;
+
+      // Constrain translation to keep map filling screen
+      const constrainedX = Math.max(minTranslateX, Math.min(maxTranslateX, newTranslateX));
+      const constrainedY = Math.max(minTranslateY, Math.min(maxTranslateY, newTranslateY));
 
       // Update shared values directly on UI thread
       skiaTranslateX.value = constrainedX;
       skiaTranslateY.value = constrainedY;
     })
-    .onEnd(() => {
-      const finalX = skiaTranslateX.value;
-      const finalY = skiaTranslateY.value;
+    .onEnd(event => {
+      const currentScale = skiaScale.value;
+      const scaledMapWidth = svgOriginalWidth * currentScale;
+      const scaledMapHeight = svgOriginalHeight * currentScale;
 
-      baseTranslateX.value = finalX;
-      baseTranslateY.value = finalY;
+      const minTranslateX = screenWidth - scaledMapWidth;
+      const maxTranslateX = 0;
+      const minTranslateY = screenHeight - scaledMapHeight;
+      const maxTranslateY = 0;
 
-      runOnJS(setTranslate)(finalX, finalY);
+      // Apply momentum with decay animation
+      skiaTranslateX.value = withDecay({
+        velocity: event.velocityX,
+        clamp: [minTranslateX, maxTranslateX],
+        deceleration: 0.998,
+      }, (finished) => {
+        if (finished) {
+          runOnJS(setTranslate)(skiaTranslateX.value, skiaTranslateY.value);
+        }
+      });
+
+      skiaTranslateY.value = withDecay({
+        velocity: event.velocityY,
+        clamp: [minTranslateY, maxTranslateY],
+        deceleration: 0.998,
+      }, (finished) => {
+        if (finished) {
+          runOnJS(setTranslate)(skiaTranslateX.value, skiaTranslateY.value);
+        }
+      });
+
+      baseTranslateX.value = skiaTranslateX.value;
+      baseTranslateY.value = skiaTranslateY.value;
     });
 
   const composedGesture = Gesture.Race(Gesture.Simultaneous(pinchGesture, panGesture));
@@ -292,7 +336,7 @@ export const SkiaWorldMap: React.FC = () => {
           {countryPaths.map((country) => (
             <React.Fragment key={country.id}>
               {renderMode !== 2 && <Path path={country.path} color="#FFFFE0" style="fill" />}
-              {/* {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.05} />} */}
+              {/* {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.1} />} */}
 
 
             </React.Fragment>
