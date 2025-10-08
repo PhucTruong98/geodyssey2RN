@@ -169,7 +169,7 @@ export const SkiaWorldMap: React.FC = () => {
     })
     .onUpdate(event => {
       // Constrain zoom: minimum is initialScale, maximum is 5x
-      const newScale = Math.max(initialScale, Math.min(5, baseScale.value * event.scale));
+      const newScale = Math.max(initialScale, Math.min(20, baseScale.value * event.scale));
 
       // Calculate the focal point position in map coordinates using the base values from onStart
       const mapPointX = (focalX.value - baseTranslateX.value) / baseScale.value;
@@ -377,7 +377,7 @@ export const SkiaWorldMap: React.FC = () => {
           {visibleCountries.map((country) => (
             <React.Fragment key={country.id}>
               {renderMode !== 2 && <Path path={country.path} color="#FFFFE0" style="fill" />}
-              {/* {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.1} />} */}
+              {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.1} />}
 
 
             </React.Fragment>
