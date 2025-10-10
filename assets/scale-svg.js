@@ -4,8 +4,8 @@ const { parse } = require('node-html-parser'); // optional lightweight HTML pars
 const svgpath = require('svgpath');
 
 const input = 'world-map.svg';
-const output = 'world-map@2x.svg';
-const scale = 2;
+const output = 'world-map@0.5x.svg';
+const scale = 0.5;
 
 let svg = fs.readFileSync(input, 'utf8');
 

@@ -1,7 +1,7 @@
 import { useMapStore } from '@/store';
-import { Canvas, Group, Path, Skia, matchFont } from '@shopify/react-native-skia';
+import { Canvas, Group, Path, Skia } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
@@ -12,6 +12,10 @@ import {
 } from 'react-native-reanimated';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// SVG map dimensions
+const MAP_WIDTH = 500;
+const MAP_HEIGHT = 241;
 
 // Function to parse SVG path and calculate bounding box
 const getPathBoundingBox = (pathData: string) => {
@@ -34,19 +38,6 @@ const getPathBoundingBox = (pathData: string) => {
 export const SkiaWorldMap: React.FC = () => {
   const { scale, translateX, translateY, setScale, setTranslate } = useMapStore();
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any, bbox: any}[]>([]);
-  const [countryNames, setCountryNames] = useState<{[key: string]: string}>({});
-
-
-
-  
-  // FPS tracking
-  const [fps, setFps] = useState(60);
-  const lastFrameTime = useSharedValue(Date.now());
-  const frameCount = useSharedValue(0);
-  const fpsUpdateInterval = useSharedValue(Date.now());
-
-  // Render mode for testing (0 = both, 1 = fill only, 2 = stroke only)
-  const [renderMode, setRenderMode] = useState(0);
 
   // Use shared values for UI thread rendering
   const skiaScale = useSharedValue(Math.max(scale, 1.0));
@@ -59,12 +50,8 @@ export const SkiaWorldMap: React.FC = () => {
   const focalX = useSharedValue(0);
   const focalY = useSharedValue(0);
 
-  const initialScale = screenHeight / 482;
-  const svgOriginalWidth = 1000;
-  const svgOriginalHeight = 482;
-  const aspectRatio = svgOriginalWidth / svgOriginalHeight;
-  const mapHeight = screenHeight;
-  const mapWidth = mapHeight * aspectRatio;
+  const initialScale = screenHeight / MAP_HEIGHT;
+  const aspectRatio = MAP_WIDTH / MAP_HEIGHT;
   const minScale = 1.0;
 
   // Load map data and convert to Skia paths
@@ -74,8 +61,9 @@ export const SkiaWorldMap: React.FC = () => {
     const loadMapData = async () => {
       try {
         // Load SVG paths
-        const svgUrl = require('../../../assets/world-map.svg');
+        // const svgUrl = require('../../../assets/world-map.svg');
         // const svgUrl = require('../../../assets/simWorldMap.svg');
+        const svgUrl = require('../../../assets/world-map-small.svg');
 
         const asset = Asset.fromModule(svgUrl);
         await asset.downloadAsync();
@@ -112,19 +100,10 @@ export const SkiaWorldMap: React.FC = () => {
           throw new Error(`Failed to fetch SVG: ${response.status}`);
         }
 
-        // Load country names
-        const countriesData = require('../../../assets/data/countries.json');
-        const nameMap: {[key: string]: string} = {};
-        countriesData.forEach((country: {code: string, name: string}) => {
-          nameMap[country.code] = country.name;
-        });
-        setCountryNames(nameMap);
-        console.log(`Loaded ${Object.keys(nameMap).length} country names`);
 
       } catch (error) {
         console.error('Error loading Skia map data:', error);
         setCountryPaths([]);
-        setCountryNames({});
       }
     };
 
@@ -180,8 +159,8 @@ export const SkiaWorldMap: React.FC = () => {
       const newTranslateY = focalY.value - mapPointY * newScale;
 
       // Calculate actual rendered map dimensions (SVG size * scale)
-      const scaledMapWidth = svgOriginalWidth * newScale;
-      const scaledMapHeight = svgOriginalHeight * newScale;
+      const scaledMapWidth = MAP_WIDTH * newScale;
+      const scaledMapHeight = MAP_HEIGHT * newScale;
 
       // Calculate proper boundaries
       const minTranslateX = screenWidth - scaledMapWidth;
@@ -222,8 +201,8 @@ export const SkiaWorldMap: React.FC = () => {
       const currentScale = skiaScale.value;
 
       // Calculate actual rendered map dimensions (SVG size * scale)
-      const scaledMapWidth = svgOriginalWidth * currentScale;
-      const scaledMapHeight = svgOriginalHeight * currentScale;
+      const scaledMapWidth = MAP_WIDTH * currentScale;
+      const scaledMapHeight = MAP_HEIGHT * currentScale;
 
       const newTranslateX = baseTranslateX.value + event.translationX;
       const newTranslateY = baseTranslateY.value + event.translationY;
@@ -249,8 +228,8 @@ export const SkiaWorldMap: React.FC = () => {
     })
     .onEnd(event => {
       const currentScale = skiaScale.value;
-      const scaledMapWidth = svgOriginalWidth * currentScale;
-      const scaledMapHeight = svgOriginalHeight * currentScale;
+      const scaledMapWidth = MAP_WIDTH * currentScale;
+      const scaledMapHeight = MAP_HEIGHT * currentScale;
 
       const minTranslateX = screenWidth - scaledMapWidth;
       const maxTranslateX = 0;
@@ -286,20 +265,6 @@ export const SkiaWorldMap: React.FC = () => {
 
   // Use useDerivedValue to create transform array on UI thread
   const transform = useDerivedValue(() => {
-    // Calculate FPS
-    const now = Date.now();
-    const delta = now - lastFrameTime.value;
-    lastFrameTime.value = now;
-    frameCount.value++;
-
-    // Update FPS every 500ms
-    if (now - fpsUpdateInterval.value > 500) {
-      const currentFps = Math.round((frameCount.value * 1000) / (now - fpsUpdateInterval.value));
-      runOnJS(setFps)(currentFps);
-      frameCount.value = 0;
-      fpsUpdateInterval.value = now;
-    }
-
     return [
       { translateX: skiaTranslateX.value },
       { translateY: skiaTranslateY.value },
@@ -307,60 +272,17 @@ export const SkiaWorldMap: React.FC = () => {
     ];
   }, []);
 
-  // Font for FPS display
-  const font = matchFont({
-    fontSize: 16,
-    fontWeight: 'bold',
-  });
+  // Memoize country path components to prevent re-renders
+  const countryElements = useMemo(() => {
+    return countryPaths.map((country) => (
+      <React.Fragment key={country.id}>
+              {<Path path={country.path} color="#FFFFE0" style="fill" />}
+              {<Path path={country.path} color="#000000" style="stroke" strokeWidth={0.01} />}
 
-  // Derived values for display text (update with FPS)
-  const fpsText = useDerivedValue(() => {
-    return `FPS: ${fps}`;
-  }, [fps]);
 
-  const zoomText = useDerivedValue(() => {
-    return `Zoom: ${skiaScale.value.toFixed(2)}x`;
-  }, []);
+            </React.Fragment>
 
-  const pathCountText = useDerivedValue(() => {
-    return `Paths: ${countryPaths.length}`;
-  }, [countryPaths.length]);
-
-  // Filter visible countries using viewport culling
-  const [visibleCountries, setVisibleCountries] = useState(countryPaths);
-
-  useEffect(() => {
-    const checkVisibility = () => {
-      const currentScale = skiaScale.value;
-      const currentTranslateX = skiaTranslateX.value;
-      const currentTranslateY = skiaTranslateY.value;
-
-      const visible = countryPaths.filter(country => {
-        if (!country.bbox) return true; // Render if no bbox
-
-        // Transform country bbox to screen coordinates
-        const countryScreenMinX = country.bbox.minX * currentScale + currentTranslateX;
-        const countryScreenMaxX = country.bbox.maxX * currentScale + currentTranslateX;
-        const countryScreenMinY = country.bbox.minY * currentScale + currentTranslateY;
-        const countryScreenMaxY = country.bbox.maxY * currentScale + currentTranslateY;
-
-        // Check if country bbox intersects with screen viewport
-        const intersects = !(
-          countryScreenMaxX < 0 || // completely left of screen
-          countryScreenMinX > screenWidth || // completely right of screen
-          countryScreenMaxY < 0 || // completely above screen
-          countryScreenMinY > screenHeight // completely below screen
-        );
-
-        return intersects;
-      });
-
-      setVisibleCountries(visible);
-    };
-
-    // Check on every animation frame
-    const interval = setInterval(checkVisibility, 15); // ~60fps
-    return () => clearInterval(interval);
+    ));
   }, [countryPaths]);
 
   return (
@@ -369,27 +291,14 @@ export const SkiaWorldMap: React.FC = () => {
         <Group transform={transform}>
           {/* Ocean background */}
           <Path
-            path="M0,0 L1000,0 L1000,482 L0,482 Z"
+            path={`M0,0 L${MAP_WIDTH},0 L${MAP_WIDTH},${MAP_HEIGHT} L0,${MAP_HEIGHT} Z`}
             color="rgb(109, 204, 236)"
           />
 
-          {/* Render countries based on render mode */}
-          {visibleCountries.map((country) => (
-            <React.Fragment key={country.id}>
-              {renderMode !== 2 && <Path path={country.path} color="#FFFFE0" style="fill" />}
-              {renderMode !== 1 && <Path path={country.path} color="#000000" style="stroke" strokeWidth={0.1} />}
-
-
-            </React.Fragment>
-          ))}
-
-
-
-
+          {/* Render all countries */}
+          {countryElements}
         </Group>
       </Canvas>
     </GestureDetector>
-
-
   );
 };
