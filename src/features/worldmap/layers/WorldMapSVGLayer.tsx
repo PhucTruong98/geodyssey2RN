@@ -1,12 +1,16 @@
-import { useMapStore } from '@/store';
 import { Asset } from 'expo-asset';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { useMapContext } from '../WorldMapMainComponent';
 
-export const WebViewWorldMap: React.FC = () => {
+/**
+ * SVG Layer - Renders the base world map using WebView with D3
+ * Handles pan/zoom gestures and syncs transform with parent component
+ */
+export const WorldMapSVGLayer: React.FC = () => {
   const webViewRef = useRef<WebView>(null);
-  const { setScale, setTranslate } = useMapStore();
+  const { transform, constants } = useMapContext();
   const [svgData, setSvgData] = useState<string | null>(null);
 
   // Load the SVG content directly
@@ -63,7 +67,6 @@ export const WebViewWorldMap: React.FC = () => {
       transform-origin: 0 0;
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
-      pointer-events: none;
       /* Force rasterization - scale the bitmap, don't re-render SVG */
       isolation: isolate;
       contain: layout style paint;
@@ -169,8 +172,8 @@ export const WebViewWorldMap: React.FC = () => {
 
         svg.call(zoom);
 
-        // Set initial zoom to fit screen height
-        const initialScale = window.innerHeight / 482;
+        // Set initial zoom to fit screen height (passed from React Native)
+        const initialScale = ${constants.initialScale};
         svg.call(zoom.transform, d3.zoomIdentity.scale(initialScale));
 
         console.log('Zoom setup complete, initial scale:', initialScale);
@@ -193,8 +196,10 @@ export const WebViewWorldMap: React.FC = () => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'transform') {
-        setScale(data.scale);
-        setTranslate(data.translateX, data.translateY);
+        // Update shared values (syncs with all layers)
+        transform.scale.value = data.scale;
+        transform.x.value = data.translateX;
+        transform.y.value = data.translateY;
       }
     } catch (error) {
       console.error('Error parsing WebView message:', error);
@@ -237,7 +242,7 @@ export const WebViewWorldMap: React.FC = () => {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgb(109, 204, 236)',
   },
   centered: {
