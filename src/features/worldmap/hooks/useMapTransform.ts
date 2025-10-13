@@ -1,8 +1,8 @@
-import { useSharedValue } from 'react-native-reanimated';
 import { useMemo } from 'react';
 import { Dimensions } from 'react-native';
+import { useSharedValue } from 'react-native-reanimated';
 
-const { height: screenHeight } = Dimensions.get('window');
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 // SVG map dimensions
 const MAP_WIDTH = 1000;
@@ -27,7 +27,10 @@ export interface MapBounds {
  */
 export const useMapTransform = () => {
   // Initial scale to fit screen height
-  const initialScale = screenHeight / MAP_HEIGHT;
+
+  // const initialScale = screenHeight / MAP_HEIGHT;
+  const initialScale = (screenHeight * 1000 / 482) / screenWidth
+
 
   // Shared values for transform (no React re-renders during gestures)
   const x = useSharedValue(0);
