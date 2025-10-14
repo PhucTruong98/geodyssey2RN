@@ -5,6 +5,7 @@ import { WebView } from 'react-native-webview';
 import { useMapContext } from '../WorldMapMainComponent';
 import { getMapViewerHtml } from '../webview/getMapViewerHtml';
 
+
 /**
  * SVG Layer - Renders the base world map using WebView with D3
  * Handles pan/zoom gestures and syncs transform with parent component
@@ -49,6 +50,9 @@ export const WorldMapSVGLayer: React.FC = () => {
         transform.scale.value = data.scale;
         transform.x.value = data.translateX;
         transform.y.value = data.translateY;
+      } else if (data.type === 'debug') {
+        // Show debug info from constraint function
+        console.log('🔍 Constraint Debug:', data.data);
       }
     } catch (error) {
       console.error('Error parsing WebView message:', error);
@@ -72,7 +76,7 @@ export const WorldMapSVGLayer: React.FC = () => {
         onMessage={handleMessage}
         onConsoleMessage={(event) => {
           console.log('WebView Console:', event.nativeEvent.message);
-        }}
+        }} 
         onError={(syntheticEvent) => {
           const { nativeEvent } = syntheticEvent;
           console.error('WebView error:', nativeEvent);
@@ -84,6 +88,10 @@ export const WorldMapSVGLayer: React.FC = () => {
         startInLoadingState={true}
         scalesPageToFit={false}
         allowsInlineMediaPlayback={true}
+        // Enable remote debugging for WebView
+        webviewDebuggingEnabled={true}
+        originWhitelist={['*']}
+        mixedContentMode="always" // allows http content on https pages (debug)
       />
     </View>
   );

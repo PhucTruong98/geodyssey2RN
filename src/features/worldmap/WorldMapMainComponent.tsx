@@ -8,7 +8,6 @@ import { WorldMapSVGLayer } from './layers/WorldMapSVGLayer';
  * Manages shared transform state and coordinates all map layers
  */
 export const WorldMapMainComponent: React.FC = () => {
-  debugger 
   const mapTransform = useMapTransform();
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
 

@@ -103,12 +103,84 @@
         // Use CSS transform instead of SVG transform for better performance
         const countriesNode = countriesGroup.node();
 
+        // Map dimensions in SVG coordinates
+        const MAP_WIDTH = 1000;
+        const MAP_HEIGHT = 482;
+
+        // Viewport dimensions
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        // Initial scale from React Native (may not be 1.0)
+        const initialScale = {{INITIAL_SCALE}};
+
         // Use requestAnimationFrame for smoother updates
         let ticking = false;
         let pendingTransform = null;
 
+        // Custom constrain function to limit panning within map boundaries
+        function constrainTransform(transform) {
+          debugger; // Breakpoint for debugging
+          const scale = transform.k;
+
+          // Calculate the scaled map dimensions in screen pixels
+          const scaledWidth = MAP_WIDTH * scale;
+          const scaledHeight = MAP_HEIGHT * scale;
+
+          // Calculate min/max translation bounds
+          // The map edges should not go beyond the viewport edges
+
+          // X bounds
+          const maxX = 0; // Left edge of map can't go right of viewport left
+          const minX = viewportWidth - scaledWidth; // Right edge of map can't go left of viewport right
+
+          // Y bounds
+          const maxY = 0; // Top edge of map can't go below viewport top
+          const minY = viewportHeight - scaledHeight; // Bottom edge of map can't go above viewport bottom
+
+          // Clamp the translation values
+          let x = transform.x;
+          let y = transform.y;
+
+          // Only constrain if map is larger than viewport, otherwise allow centering
+          if (scaledWidth > viewportWidth) {
+            x = Math.max(minX, Math.min(maxX, x));
+          } else {
+            // Center horizontally if map is smaller than viewport
+            x = (viewportWidth - scaledWidth) / 2;
+          }
+
+          if (scaledHeight > viewportHeight) {
+            y = Math.max(minY, Math.min(maxY, y));
+          } else {
+            // Center vertically if map is smaller than viewport
+            y = (viewportHeight - scaledHeight) / 2;
+          }
+
+          const debugInfo = {
+            scale,
+            scaledDims: [Math.round(scaledWidth), Math.round(scaledHeight)],
+            viewport: [viewportWidth, viewportHeight],
+            bounds: { x: [Math.round(minX), Math.round(maxX)], y: [Math.round(minY), Math.round(maxY)] },
+            before: [Math.round(transform.x), Math.round(transform.y)],
+            after: [Math.round(x), Math.round(y)]
+          };
+          console.log('Constraint:', JSON.stringify(debugInfo));
+
+          // Send debug info to React Native (will appear once per pan gesture)
+          if (window.ReactNativeWebView && Math.random() < 0.1) { // Only 10% of the time to avoid spam
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'debug',
+              data: debugInfo
+            }));
+          }
+
+          return d3.zoomIdentity.translate(x, y).scale(scale);
+        }
+
         const zoom = d3.zoom()
-          .scaleExtent([1, 20])
+          .scaleExtent([initialScale, initialScale * 20]) // Start from initialScale, not 1.0
+          .constrain(constrainTransform)
           .on('zoom', (event) => {
             pendingTransform = event.transform;
 
@@ -137,11 +209,14 @@
 
         svg.call(zoom);
 
-        // Set initial zoom to fit screen height (passed from React Native)
-        const initialScale = {{INITIAL_SCALE}};
+        // Set initial zoom to fit screen
         svg.call(zoom.transform, d3.zoomIdentity.scale(initialScale));
 
-        console.log('Zoom setup complete, initial scale:', initialScale);
+        console.log('Zoom setup complete');
+        console.log('Initial scale:', initialScale);
+        console.log('Viewport:', viewportWidth, 'x', viewportHeight);
+        console.log('Map bounds:', MAP_WIDTH, 'x', MAP_HEIGHT);
+        console.log('Initial scaled size:', MAP_WIDTH * initialScale, 'x', MAP_HEIGHT * initialScale);
       }
 
       // Handle messages from React Native
