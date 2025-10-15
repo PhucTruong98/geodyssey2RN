@@ -63,13 +63,14 @@
   </style>
 </head>
 <body>
-  <svg id="map" preserveAspectRatio="xMidYMid meet" viewBox="0 0 1000 482">
+  <svg id="map" preserveAspectRatio="xMidYMin meet" viewBox="0 0 1000 482">
     <rect class="ocean" x="0" y="0" width="1000" height="482" />
     <g id="countries"></g>
   </svg>
 
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script>
+//# sourceURL=map-viewer.js
     (function() {
       const svg = d3.select('#map');
       const countriesGroup = d3.select('#countries');
@@ -102,6 +103,7 @@
       function setupZoom() {
         // Use CSS transform instead of SVG transform for better performance
         const countriesNode = countriesGroup.node();
+        const svgElement = svg.node();
 
         // Map dimensions in SVG coordinates
         const MAP_WIDTH = 1000;
@@ -118,25 +120,35 @@
         let ticking = false;
         let pendingTransform = null;
 
+        // Momentum/flick scrolling variables
+        let lastTransform = null;
+        let lastTimestamp = 0;
+        let velocityX = 0;
+        let velocityY = 0;
+        let momentumAnimation = null;
+        let isAnimatingMomentum = false; // Flag to prevent event handlers from interfering
+
         // Custom constrain function to limit panning within map boundaries
         function constrainTransform(transform) {
-          debugger; // Breakpoint for debugging
           const scale = transform.k;
 
-          // Calculate the scaled map dimensions in screen pixels
+          // // Calculate the scaled map dimensions in screen pixels
           const scaledWidth = MAP_WIDTH * scale;
           const scaledHeight = MAP_HEIGHT * scale;
+
+          // const scaledWidth = viewportWidth * scale;
+          // const scaledHeight = scaledWidth * MAP_HEIGHT / MAP_WIDTH;
 
           // Calculate min/max translation bounds
           // The map edges should not go beyond the viewport edges
 
           // X bounds
           const maxX = 0; // Left edge of map can't go right of viewport left
-          const minX = viewportWidth - scaledWidth; // Right edge of map can't go left of viewport right
+          const minX = 1000 - scaledWidth; // Right edge of map can't go left of viewport right
 
           // Y bounds
           const maxY = 0; // Top edge of map can't go below viewport top
-          const minY = viewportHeight - scaledHeight; // Bottom edge of map can't go above viewport bottom
+          const minY = 1000 * (viewportHeight / viewportWidth) - scaledHeight; // Bottom edge of map can't go above viewport bottom
 
           // Clamp the translation values
           let x = transform.x;
@@ -178,10 +190,99 @@
           return d3.zoomIdentity.translate(x, y).scale(scale);
         }
 
+        // Momentum animation function
+        function animateMomentum() {
+          if (Math.abs(velocityX) < 0.5 && Math.abs(velocityY) < 0.5) {
+            // Velocity too small, stop animation
+            velocityX = 0;
+            velocityY = 0;
+            momentumAnimation = null;
+            isAnimatingMomentum = false;
+            return;
+          }
+
+          // Get current transform
+          const currentTransform = d3.zoomTransform(svgElement);
+
+          // Apply velocity to position
+          const newX = currentTransform.x + velocityX;
+          const newY = currentTransform.y + velocityY;
+
+          // Create new transform with constraints
+          let newTransform = d3.zoomIdentity
+            .translate(newX, newY)
+            .scale(currentTransform.k);
+
+          // Apply constraints
+          newTransform = constrainTransform(newTransform);
+
+          // Check if we hit a boundary (constrained position != desired position)
+          const hitBoundaryX = Math.abs(newTransform.x - newX) > 0.1;
+          const hitBoundaryY = Math.abs(newTransform.y - newY) > 0.1;
+
+          // Stop velocity on the axis that hit boundary
+          if (hitBoundaryX) velocityX = 0;
+          if (hitBoundaryY) velocityY = 0;
+
+          // Set flag to prevent event handlers from resetting velocity
+          isAnimatingMomentum = true;
+
+          // Apply the transform
+          svg.call(zoom.transform, newTransform);
+
+          // Apply friction (deceleration)
+          velocityX *= 0.95;
+          velocityY *= 0.95;
+
+          // Continue animation
+          momentumAnimation = requestAnimationFrame(animateMomentum);
+        }
+
         const zoom = d3.zoom()
           .scaleExtent([initialScale, initialScale * 20]) // Start from initialScale, not 1.0
           .constrain(constrainTransform)
+          .on('start', (event) => {
+            console.log('Zoom start:', event.sourceEvent?.type, 'isAnimatingMomentum:', isAnimatingMomentum);
+
+            // Only cancel momentum if this is a real user gesture (not from momentum animation)
+            if (momentumAnimation && !isAnimatingMomentum) {
+              console.log('Canceling momentum due to user gesture');
+              cancelAnimationFrame(momentumAnimation);
+              momentumAnimation = null;
+              isAnimatingMomentum = false;
+              velocityX = 0;
+              velocityY = 0;
+            }
+
+            // Only reset tracking for real user gestures
+            if (!isAnimatingMomentum) {
+              lastTransform = event.transform;
+              lastTimestamp = Date.now();
+            }
+          })
           .on('zoom', (event) => {
+            // Skip velocity tracking during momentum animation
+            if (!isAnimatingMomentum) {
+              // Track velocity for momentum
+              const now = Date.now();
+              const dt = now - lastTimestamp;
+
+              if (dt > 0 && lastTransform && event.sourceEvent) {
+                // Only track velocity during pan (not zoom)
+                if (event.sourceEvent.type === 'touchmove' || event.sourceEvent.type === 'mousemove') {
+                  const dx = event.transform.x - lastTransform.x;
+                  const dy = event.transform.y - lastTransform.y;
+
+                  // Calculate velocity in pixels per millisecond
+                  velocityX = dx / dt * 16; // Scale to ~60fps
+                  velocityY = dy / dt * 16;
+                }
+              }
+
+              lastTransform = event.transform;
+              lastTimestamp = now;
+            }
+
             pendingTransform = event.transform;
 
             if (!ticking) {
@@ -198,7 +299,30 @@
             }
           })
           .on('end', (event) => {
-            // Only send transform data to React Native when zoom ends
+            // Start momentum animation if velocity is significant
+            const speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
+
+            console.log('Zoom end:', {
+              eventType: event.sourceEvent?.type,
+              velocity: [velocityX.toFixed(2), velocityY.toFixed(2)],
+              speed: speed.toFixed(2)
+            });
+
+            if (speed > 1 && event.sourceEvent) {
+              // Only apply momentum for pan gestures, not zoom
+              const eventType = event.sourceEvent.type;
+              if (eventType === 'touchend' || eventType === 'mouseup') {
+                console.log('✅ Starting momentum animation');
+                isAnimatingMomentum = false; // Will be set to true in animateMomentum
+                animateMomentum();
+              } else {
+                console.log('❌ Wrong event type for momentum:', eventType);
+              }
+            } else {
+              console.log('❌ Speed too low or no sourceEvent');
+            }
+
+            // Send transform data to React Native when zoom ends
             window.ReactNativeWebView?.postMessage(JSON.stringify({
               type: 'transform',
               scale: event.transform.k,

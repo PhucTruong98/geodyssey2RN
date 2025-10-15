@@ -33,5 +33,9 @@ export const getMapViewerHtml = async (params: MapViewerParams): Promise<string>
     .replace('{{SVG_DATA}}', escapedSvgData)
     .replace('{{INITIAL_SCALE}}', params.initialScale.toString());
 
+  // Add sourceURL comment for better debugging in Chrome DevTools
+  // This makes the script appear as "map-viewer.js" in the debugger
+  console.log('Generated HTML with initialScale:', params.initialScale);
+
   return htmlTemplate;
 };
