@@ -244,8 +244,11 @@
           .on('start', (event) => {
             console.log('Zoom start:', event.sourceEvent?.type, 'isAnimatingMomentum:', isAnimatingMomentum);
 
-            // Only cancel momentum if this is a real user gesture (not from momentum animation)
-            if (momentumAnimation && !isAnimatingMomentum) {
+            // Check if this is a real user gesture (has sourceEvent)
+            const isUserGesture = event.sourceEvent != null;
+
+            // Always cancel momentum on real user gestures (touch/mouse)
+            if (isUserGesture && momentumAnimation) {
               console.log('Canceling momentum due to user gesture');
               cancelAnimationFrame(momentumAnimation);
               momentumAnimation = null;
@@ -254,8 +257,8 @@
               velocityY = 0;
             }
 
-            // Only reset tracking for real user gestures
-            if (!isAnimatingMomentum) {
+            // Only reset tracking for real user gestures (not programmatic transforms)
+            if (isUserGesture || !isAnimatingMomentum) {
               lastTransform = event.transform;
               lastTimestamp = Date.now();
             }
@@ -285,6 +288,7 @@
 
             pendingTransform = event.transform;
 
+            //this piece of code is used to batch all the x,y,scale changes into one frame, -> improve performance
             if (!ticking) {
               requestAnimationFrame(() => {
                 if (pendingTransform) {
@@ -336,11 +340,11 @@
         // Set initial zoom to fit screen
         svg.call(zoom.transform, d3.zoomIdentity.scale(initialScale));
 
-        console.log('Zoom setup complete');
-        console.log('Initial scale:', initialScale);
-        console.log('Viewport:', viewportWidth, 'x', viewportHeight);
-        console.log('Map bounds:', MAP_WIDTH, 'x', MAP_HEIGHT);
-        console.log('Initial scaled size:', MAP_WIDTH * initialScale, 'x', MAP_HEIGHT * initialScale);
+        // console.log('Zoom setup complete');
+        // console.log('Initial scale:', initialScale);
+        // console.log('Viewport:', viewportWidth, 'x', viewportHeight);
+        // console.log('Map bounds:', MAP_WIDTH, 'x', MAP_HEIGHT);
+        // console.log('Initial scaled size:', MAP_WIDTH * initialScale, 'x', MAP_HEIGHT * initialScale);
       }
 
       // Handle messages from React Native
