@@ -127,6 +127,7 @@
         let velocityY = 0;
         let momentumAnimation = null;
         let isAnimatingMomentum = false; // Flag to prevent event handlers from interfering
+        let isPinchZooming = false; // Flag to detect pinch zoom gestures
 
         // Custom constrain function to limit panning within map boundaries
         function constrainTransform(transform) {
@@ -257,6 +258,9 @@
               velocityY = 0;
             }
 
+            // Reset pinch zoom flag on new gesture
+            isPinchZooming = false;
+
             // Only reset tracking for real user gestures (not programmatic transforms)
             if (isUserGesture || !isAnimatingMomentum) {
               lastTransform = event.transform;
@@ -271,8 +275,16 @@
               const dt = now - lastTimestamp;
 
               if (dt > 0 && lastTransform && event.sourceEvent) {
-                // Only track velocity during pan (not zoom)
-                if (event.sourceEvent.type === 'touchmove' || event.sourceEvent.type === 'mousemove') {
+                // Detect if scale is changing (pinch zoom)
+                const scaleChanged = Math.abs(event.transform.k - lastTransform.k) > 0.01;
+
+                if (scaleChanged) {
+                  // This is a pinch zoom gesture, not a pan
+                  isPinchZooming = true;
+                  velocityX = 0;
+                  velocityY = 0;
+                } else if (!isPinchZooming && (event.sourceEvent.type === 'touchmove' || event.sourceEvent.type === 'mousemove')) {
+                  // Only track velocity during pure pan (no scale change)
                   const dx = event.transform.x - lastTransform.x;
                   const dy = event.transform.y - lastTransform.y;
 
@@ -309,11 +321,15 @@
             console.log('Zoom end:', {
               eventType: event.sourceEvent?.type,
               velocity: [velocityX.toFixed(2), velocityY.toFixed(2)],
-              speed: speed.toFixed(2)
+              speed: speed.toFixed(2),
+              isPinchZooming
             });
 
-            if (speed > 1 && event.sourceEvent) {
-              // Only apply momentum for pan gestures, not zoom
+            // Only apply momentum if:
+            // 1. Speed is significant
+            // 2. This is a touch/mouse end event
+            // 3. This was NOT a pinch zoom gesture
+            if (speed > 1 && event.sourceEvent && !isPinchZooming) {
               const eventType = event.sourceEvent.type;
               if (eventType === 'touchend' || eventType === 'mouseup') {
                 console.log('✅ Starting momentum animation');
@@ -323,7 +339,11 @@
                 console.log('❌ Wrong event type for momentum:', eventType);
               }
             } else {
-              console.log('❌ Speed too low or no sourceEvent');
+              if (isPinchZooming) {
+                console.log('❌ Was pinch zooming, no momentum');
+              } else {
+                console.log('❌ Speed too low or no sourceEvent');
+              }
             }
 
             // Send transform data to React Native when zoom ends
