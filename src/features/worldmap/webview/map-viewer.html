@@ -25,6 +25,12 @@
       stroke: #000000;
       stroke-width: 0.07;
       shape-rendering: optimizeSpeed;
+      cursor: pointer;
+      pointer-events: all;
+    }
+
+    .country:hover {
+      fill: #b5ffb5;
     }
 
     #countries {
@@ -78,6 +84,57 @@
       // SVG data is embedded directly (injected from React Native)
       const svgText = `{{SVG_DATA}}`;
 
+
+      // Store zoom object globally within this scope for zoomToCountry function
+      let zoomBehavior;
+
+      // Function to zoom to a specific country
+      function zoomToCountry(pathElement) {
+        // Get the bounding box of the country path
+        const bbox = pathElement.getBBox();
+
+        console.log('Country bbox:', {
+          x: bbox.x,
+          y: bbox.y,
+          width: bbox.width,
+          height: bbox.height
+        });
+
+        // Viewport dimensions
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        // Calculate scale to fit the country in viewport with some padding
+        const padding = 0; // pixels of padding around the country
+        const scaleX = (1000 - padding * 2) / bbox.width;
+        const scaleY = (viewportHeight / viewportWidth * 1000 - padding * 2) / bbox.height;
+        const scale = Math.min(scaleX, scaleY); // Use smaller scale to ensure fit
+
+        // Calculate the center of the bounding box in SVG coordinates
+        const centerX = bbox.x + bbox.width / 2;
+        const centerY = bbox.y + bbox.height / 2;
+
+        // Calculate translation to center the country in viewport
+        const translateX = 1000 / 2 - centerX * scale;
+        const translateY = (viewportHeight / viewportWidth * 1000) / 2 - centerY * scale;
+
+
+
+
+       
+
+        // Create the transform
+        const transform = d3.zoomIdentity
+          .translate(translateX, translateY)
+          .scale(scale);
+
+        // Animate to the new transform
+        svg.transition()
+          .duration(1000) // 750ms animation
+          .call(zoomBehavior.transform, transform);
+      }
+
+
       try {
         // Parse SVG and extract paths
         const parser = new DOMParser();
@@ -86,12 +143,28 @@
 
         console.log('Parsing SVG, found paths:', paths.length);
 
-        // Add paths to D3 selection
+        // Add paths to D3 selection with click handlers
         paths.forEach(path => {
-          countriesGroup.append('path')
+          const countryPath = countriesGroup.append('path')
             .attr('class', 'country')
             .attr('d', path.getAttribute('d'))
             .attr('id', path.getAttribute('id') || '');
+
+          // Add click handler to zoom to country
+          countryPath.on('click', function(event) {
+            event.stopPropagation();
+            const countryId = this.getAttribute('id');
+            // console.log('Country clicked:', countryId);
+
+            // Notify React Native
+            window.ReactNativeWebView?.postMessage(JSON.stringify({
+              type: 'countryClick',
+              countryId: countryId
+            }));
+
+            // Zoom to the country
+            zoomToCountry(this);
+          });
         });
 
         console.log(`Loaded ${paths.length} country paths`);
@@ -229,7 +302,7 @@
           isAnimatingMomentum = true;
 
           // Apply the transform
-          svg.call(zoom.transform, newTransform);
+          svg.call(zoomBehavior.transform, newTransform);
 
           // Apply friction (deceleration)
           velocityX *= 0.95;
@@ -239,7 +312,8 @@
           momentumAnimation = requestAnimationFrame(animateMomentum);
         }
 
-        const zoom = d3.zoom()
+        // Create zoom behavior and store it globally
+        zoomBehavior = d3.zoom()
           .scaleExtent([initialScale, initialScale * 20]) // Start from initialScale, not 1.0
           .constrain(constrainTransform)
           .on('start', (event) => {
@@ -355,10 +429,10 @@
             }));
           });
 
-        svg.call(zoom);
+        svg.call(zoomBehavior);
 
         // Set initial zoom to fit screen
-        svg.call(zoom.transform, d3.zoomIdentity.scale(initialScale));
+        svg.call(zoomBehavior.transform, d3.zoomIdentity.scale(initialScale));
 
         // console.log('Zoom setup complete');
         // console.log('Initial scale:', initialScale);

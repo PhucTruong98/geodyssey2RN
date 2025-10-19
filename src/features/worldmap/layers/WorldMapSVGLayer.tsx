@@ -53,6 +53,11 @@ export const WorldMapSVGLayer: React.FC = () => {
       } else if (data.type === 'debug') {
         // Show debug info from constraint function
         console.log('🔍 Constraint Debug:', data.data);
+      } else if (data.type === 'countryClick') {
+        // Country was clicked
+        console.log('🗺️ Country clicked:', data.countryId);
+        // You can update selectedCountry state here if needed
+        // setSelectedCountry(data.countryId);
       }
     } catch (error) {
       console.error('Error parsing WebView message:', error);
