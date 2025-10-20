@@ -105,6 +105,20 @@
       // SVG data is embedded directly (injected from React Native)
       const svgText = `{{SVG_DATA}}`;
 
+      // Countries data (injected from React Native)
+      const countriesJson = `{{COUNTRIES_DATA}}`;
+
+      // Create country code to name lookup map
+      const countryNameMap = {};
+      try {
+        const countries = JSON.parse(countriesJson);
+        countries.forEach(country => {
+          countryNameMap[country.code] = country.name;
+        });
+        console.log('Loaded country names for', Object.keys(countryNameMap).length, 'countries');
+      } catch (error) {
+        console.error('Error parsing countries data:', error);
+      }
 
       // Store zoom object globally within this scope for zoomToCountry function
       let zoomBehavior;
@@ -119,10 +133,10 @@
 
         countryPaths.each(function() {
           const path = this;
-          const countryId = path.getAttribute('id');
+          const countryCode = path.getAttribute('id');
 
           // Skip if no ID
-          if (!countryId) return;
+          if (!countryCode) return;
 
           // Calculate centroid using bounding box
           const bbox = path.getBBox();
@@ -132,9 +146,13 @@
           // Calculate country size (area of bounding box as proxy)
           const size = bbox.width * bbox.height;
 
+          // Get country name from lookup map, fallback to code if not found
+          const countryName = countryNameMap[countryCode] || countryCode;
+
           // Store country data
           countryData.push({
-            id: countryId,
+            id: countryCode,
+            name: countryName,
             x: centerX,
             y: centerY,
             size: size
@@ -152,7 +170,7 @@
             .attr('y', country.y)
             .attr('data-size-rank', index) // Store rank for visibility control
             .attr('data-size', country.size)
-            .text(country.id)
+            .text(country.name) // Use country name instead of code
             .style('display', 'none'); // Initially hidden, will be shown based on zoom
         });
 
@@ -530,6 +548,13 @@
                   const transformString = `translate3d(${t.x}px, ${t.y}px, 0) scale(${t.k})`;
                   countriesNode.style.transform = transformString;
                   labelsNode.style.transform = transformString;
+
+                  // Adjust font size to counter the scale, keeping text size constant
+                  const baseFontSize = 8; // Base font size in px
+                  const adjustedFontSize = baseFontSize / t.k * initialScale;
+                  labelsGroup.selectAll('.country-label').each(function() {
+                    this.style.fontSize = `${adjustedFontSize}px`;
+                  });
 
                   // Update label visibility based on zoom level and viewport
                   updateLabelVisibility(t.k, initialScale, t.x, t.y);

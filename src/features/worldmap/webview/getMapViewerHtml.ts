@@ -4,6 +4,7 @@
  */
 
 import { Asset } from 'expo-asset';
+import countriesData from '../../../assets/data/countries.json';
 
 interface MapViewerParams {
   svgData: string;
@@ -28,10 +29,17 @@ export const getMapViewerHtml = async (params: MapViewerParams): Promise<string>
     .replace(/`/g, '\\`')
     .replace(/\$/g, '\\$');
 
+  // Convert countries data to JSON string and escape it
+  const countriesJsonString = JSON.stringify(countriesData);
+  const escapedCountriesData = countriesJsonString
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$');
+
   // Replace placeholders with actual values
   htmlTemplate = htmlTemplate
     .replace('{{SVG_DATA}}', escapedSvgData)
-    .replace('{{INITIAL_SCALE}}', params.initialScale.toString());
+    .replace('{{INITIAL_SCALE}}', params.initialScale.toString())
+    .replace('{{COUNTRIES_DATA}}', escapedCountriesData);
 
   // Add sourceURL comment for better debugging in Chrome DevTools
   // This makes the script appear as "map-viewer.js" in the debugger
