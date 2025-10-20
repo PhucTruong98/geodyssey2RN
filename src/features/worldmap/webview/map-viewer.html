@@ -77,9 +77,11 @@
 
     .country-label {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      font-size: 8px;
-      font-weight: 600;
-      fill: rgba(0, 0, 0, 0.7);
+      /* font-size and stroke-width will be set dynamically via JavaScript */
+      font-weight: 700;
+      fill: rgba(0, 0, 0, 0.85);
+      stroke: rgba(255, 255, 255, 0.9);
+      paint-order: stroke fill;
       text-anchor: middle;
       dominant-baseline: middle;
       pointer-events: none;
@@ -98,6 +100,10 @@
   <script>
 //# sourceURL=map-viewer.js
     (function() {
+      // Shared constants for label styling
+      const BASE_FONT_SIZE = 8; // Base font size in px
+      const BASE_STROKE_WIDTH = 1.5; // Base stroke width in px
+
       const svg = d3.select('#map');
       const countriesGroup = d3.select('#countries');
       const labelsGroup = d3.select('#labels');
@@ -171,7 +177,9 @@
             .attr('data-size-rank', index) // Store rank for visibility control
             .attr('data-size', country.size)
             .text(country.name) // Use country name instead of code
-            .style('display', 'none'); // Initially hidden, will be shown based on zoom
+            .style('display', 'none') // Initially hidden, will be shown based on zoom
+            .style('font-size', `${BASE_FONT_SIZE}px`) // Set initial font size
+            .style('stroke-width', `${BASE_STROKE_WIDTH}px`); // Set initial stroke width
         });
 
         console.log('Added labels for', countryData.length, 'countries');
@@ -550,10 +558,12 @@
                   labelsNode.style.transform = transformString;
 
                   // Adjust font size to counter the scale, keeping text size constant
-                  const baseFontSize = 8; // Base font size in px
-                  const adjustedFontSize = baseFontSize / t.k * initialScale;
+                  const adjustedFontSize = BASE_FONT_SIZE / t.k * initialScale;
+                  const adjustedStrokeSize = BASE_STROKE_WIDTH / t.k * initialScale;
+
                   labelsGroup.selectAll('.country-label').each(function() {
                     this.style.fontSize = `${adjustedFontSize}px`;
+                    this.style.strokeWidth = `${adjustedStrokeSize}px`;
                   });
 
                   // Update label visibility based on zoom level and viewport
