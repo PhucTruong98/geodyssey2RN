@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useMapTransform } from './hooks/useMapTransform';
+import { WorldMapCountryLabelsLayer } from './layers/WorldMapCountryLabelsLayer';
 import { WorldMapSVGLayer } from './layers/WorldMapSVGLayer';
 
 /**
@@ -10,6 +11,14 @@ import { WorldMapSVGLayer } from './layers/WorldMapSVGLayer';
 export const WorldMapMainComponent: React.FC = () => {
   const mapTransform = useMapTransform();
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+  const styles = StyleSheet.create({
+    container: { flex: 1 },
+    overlay: {
+      ...StyleSheet.absoluteFillObject,     // sits over the whole map
+      // no background so fully transparent
+    },
+  });
+
 
   return (
     <MapContext.Provider
@@ -25,13 +34,18 @@ export const WorldMapMainComponent: React.FC = () => {
         {/* Base map layer */}
         <WorldMapSVGLayer />
 
-        {/* Country name labels layer */}
-        {/* <CountryNameLayer /> */}
+        <View style={styles.overlay} pointerEvents="box-none">
+          <WorldMapCountryLabelsLayer />       
+        </View>
+
+
 
         {/* Future layers can be added here */}
       </View>
     </MapContext.Provider>
   );
+
+
 };
 
 const styles = StyleSheet.create({
@@ -73,3 +87,4 @@ export const useMapContext = () => {
   }
   return context;
 };
+

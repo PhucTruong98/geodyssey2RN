@@ -66,12 +66,32 @@
     .ocean {
       fill: rgb(109, 204, 236);
     }
+
+    #labels {
+      will-change: transform;
+      transform-origin: 0 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      pointer-events: none; /* Labels don't need interaction */
+    }
+
+    .country-label {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-size: 8px;
+      font-weight: 600;
+      fill: rgba(0, 0, 0, 0.7);
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
   <svg id="map" preserveAspectRatio="xMidYMin meet" viewBox="0 0 1000 482">
     <rect class="ocean" x="0" y="0" width="1000" height="482" />
     <g id="countries"></g>
+    <g id="labels"></g>
   </svg>
 
   <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -80,6 +100,7 @@
     (function() {
       const svg = d3.select('#map');
       const countriesGroup = d3.select('#countries');
+      const labelsGroup = d3.select('#labels');
 
       // SVG data is embedded directly (injected from React Native)
       const svgText = `{{SVG_DATA}}`;
@@ -87,6 +108,127 @@
 
       // Store zoom object globally within this scope for zoomToCountry function
       let zoomBehavior;
+
+      // Store country data with sizes for dynamic label visibility
+      const countryData = [];
+
+      // Function to add country ID labels at centroid of each country
+      function addCountryLabels() {
+        // Get all country paths
+        const countryPaths = countriesGroup.selectAll('.country');
+
+        countryPaths.each(function() {
+          const path = this;
+          const countryId = path.getAttribute('id');
+
+          // Skip if no ID
+          if (!countryId) return;
+
+          // Calculate centroid using bounding box
+          const bbox = path.getBBox();
+          const centerX = bbox.x + bbox.width / 2;
+          const centerY = bbox.y + bbox.height / 2;
+
+          // Calculate country size (area of bounding box as proxy)
+          const size = bbox.width * bbox.height;
+
+          // Store country data
+          countryData.push({
+            id: countryId,
+            x: centerX,
+            y: centerY,
+            size: size
+          });
+        });
+
+        // Sort countries by size (largest first)
+        countryData.sort((a, b) => b.size - a.size);
+
+        // Add labels for all countries
+        countryData.forEach((country, index) => {
+          labelsGroup.append('text')
+            .attr('class', 'country-label')
+            .attr('x', country.x)
+            .attr('y', country.y)
+            .attr('data-size-rank', index) // Store rank for visibility control
+            .attr('data-size', country.size)
+            .text(country.id)
+            .style('display', 'none'); // Initially hidden, will be shown based on zoom
+        });
+
+        console.log('Added labels for', countryData.length, 'countries');
+      }
+
+      // Function to update label visibility based on zoom level and viewport culling
+      function updateLabelVisibility(scale, initialScale, translateX, translateY) {
+        // Calculate zoom factor relative to initial scale
+        const zoomFactor = scale / initialScale;
+
+        // Define visibility thresholds
+        // At 1x zoom (initial): show top 10% (largest countries)
+        // At 2x zoom: show top 25%
+        // At 4x zoom: show top 50%
+        // At 8x zoom: show top 75%
+        // At 16x+ zoom: show all countries
+
+        let visiblePercentage;
+        if (zoomFactor < 1.5) {
+          visiblePercentage = 0.10; // 10%
+        } else if (zoomFactor < 3) {
+          visiblePercentage = 0.25; // 25%
+        } else if (zoomFactor < 6) {
+          visiblePercentage = 0.50; // 50%
+        } else if (zoomFactor < 12) {
+          visiblePercentage = 0.75; // 75%
+        } else {
+          visiblePercentage = 1.0; // 100%
+        }
+
+        const visibleCount = Math.ceil(countryData.length * visiblePercentage);
+
+        // Viewport bounds in screen coordinates
+        // const viewportWidth = window.innerWidth;
+        // const viewportHeight = window.innerHeight;
+        const viewportWidth = 1000;
+        const viewportHeight =1000 * window.innerHeight / window.innerWidth;
+
+        // Add padding to viewport bounds (show labels slightly outside screen)
+        const padding = 50; // pixels
+        const minX = -padding;
+        const minY = -padding;
+        const maxX = viewportWidth + padding;
+        const maxY = viewportHeight + padding;
+
+        // Update visibility of all labels
+        labelsGroup.selectAll('.country-label').each(function() {
+          const label = this;
+          const rank = parseInt(label.getAttribute('data-size-rank'));
+
+          // First check: is this country large enough to show at this zoom level?
+          if (rank >= visibleCount) {
+            label.style.display = 'none';
+            return;
+          }
+
+          // Second check: is the label within the viewport?
+          // Transform label position from map coordinates to screen coordinates
+          const mapX = parseFloat(label.getAttribute('x'));
+          const mapY = parseFloat(label.getAttribute('y'));
+
+          const screenX = mapX * scale + translateX;
+          const screenY = mapY * scale + translateY;
+
+          // Check if label is within viewport bounds (with padding)
+          const isInViewport = screenX >= minX && screenX <= maxX &&
+                               screenY >= minY && screenY <= maxY;
+
+          if (isInViewport) {
+            label.style.display = 'block';
+          } else {
+            label.style.display = 'none';
+          }
+        });
+      }
 
       // Function to zoom to a specific country
       function zoomToCountry(pathElement) {
@@ -168,6 +310,10 @@
         });
 
         console.log(`Loaded ${paths.length} country paths`);
+
+        // Add country labels after all paths are loaded
+        addCountryLabels();
+
         setupZoom();
       } catch (error) {
         console.error('Error parsing SVG:', error);
@@ -176,6 +322,7 @@
       function setupZoom() {
         // Use CSS transform instead of SVG transform for better performance
         const countriesNode = countriesGroup.node();
+        const labelsNode = labelsGroup.node();
         const svgElement = svg.node();
 
         // Map dimensions in SVG coordinates
@@ -380,7 +527,13 @@
                 if (pendingTransform) {
                   // Apply transform using CSS transform (GPU accelerated)
                   const t = pendingTransform;
-                  countriesNode.style.transform = `translate3d(${t.x}px, ${t.y}px, 0) scale(${t.k})`;
+                  const transformString = `translate3d(${t.x}px, ${t.y}px, 0) scale(${t.k})`;
+                  countriesNode.style.transform = transformString;
+                  labelsNode.style.transform = transformString;
+
+                  // Update label visibility based on zoom level and viewport
+                  updateLabelVisibility(t.k, initialScale, t.x, t.y);
+
                   pendingTransform = null;
                 }
                 ticking = false;
@@ -433,6 +586,9 @@
 
         // Set initial zoom to fit screen
         svg.call(zoomBehavior.transform, d3.zoomIdentity.scale(initialScale));
+
+        // Set initial label visibility (show only largest countries at initial zoom)
+        updateLabelVisibility(initialScale, initialScale, 0, 0);
 
         // console.log('Zoom setup complete');
         // console.log('Initial scale:', initialScale);
