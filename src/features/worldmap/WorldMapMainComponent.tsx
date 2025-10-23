@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useMapTransform } from './hooks/useMapTransform';
+import { CountrySkiaLayerComponent } from './layers/CountrySkiaLayerComponent';
 import { WorldMapCountryLabelsLayer } from './layers/WorldMapCountryLabelsLayer';
 import { WorldMapSVGLayer } from './layers/WorldMapSVGLayer';
 
@@ -10,7 +11,7 @@ import { WorldMapSVGLayer } from './layers/WorldMapSVGLayer';
  */
 export const WorldMapMainComponent: React.FC = () => {
   const mapTransform = useMapTransform();
-  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+  const [selectedCountryCode, setSelectedCountryCode] = useState<string | null>(null);
   const styles = StyleSheet.create({
     container: { flex: 1 },
     overlay: {
@@ -26,19 +27,20 @@ export const WorldMapMainComponent: React.FC = () => {
         transform: mapTransform.transform,
         constants: mapTransform.constants,
         utils: mapTransform.utils,
-        selectedCountry,
-        setSelectedCountry,
+        selectedCountryCode,
+        setSelectedCountryCode,
       }}
     >
       <View style={styles.container}>
         {/* Base map layer */}
         <WorldMapSVGLayer />
 
+        {/* Detailed country layer (Skia) - shown when country is selected */}
+        <CountrySkiaLayerComponent countryCode={selectedCountryCode} />
+
         <View style={styles.overlay} pointerEvents="box-none">
-          <WorldMapCountryLabelsLayer />       
+          <WorldMapCountryLabelsLayer />
         </View>
-
-
 
         {/* Future layers can be added here */}
       </View>
@@ -73,8 +75,8 @@ export const MapContext = React.createContext<{
     getVisibleBounds: (screenWidth: number, screenHeight: number, scale: number, x: number, y: number) => any;
     isPointVisible: (mapX: number, mapY: number, screenWidth: number, screenHeight: number, scale: number, x: number, y: number) => boolean;
   };
-  selectedCountry: string | null;
-  setSelectedCountry: (countryId: string | null) => void;
+  selectedCountryCode: string | null;
+  setSelectedCountryCode: (countryCode: string | null) => void;
 } | null>(null);
 
 /**

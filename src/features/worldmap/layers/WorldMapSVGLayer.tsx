@@ -12,7 +12,7 @@ import { getMapViewerHtml } from '../webview/getMapViewerHtml';
  */
 export const WorldMapSVGLayer: React.FC = () => {
   const webViewRef = useRef<WebView>(null);
-  const { transform, constants } = useMapContext();
+  const { transform, constants, setSelectedCountryCode } = useMapContext();
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
 
   // Load the SVG content and generate HTML
@@ -54,10 +54,10 @@ export const WorldMapSVGLayer: React.FC = () => {
         // Show debug info from constraint function
         console.log('🔍 Constraint Debug:', data.data);
       } else if (data.type === 'countryClick') {
-        // Country was clicked
+        // Country was clicked - zoom animation happens in WebView
         console.log('🗺️ Country clicked:', data.countryId);
-        // You can update selectedCountry state here if needed
-        // setSelectedCountry(data.countryId);
+        // Show detailed Skia layer for this country
+        setSelectedCountryCode(data.countryId);
       }
     } catch (error) {
       console.error('Error parsing WebView message:', error);
