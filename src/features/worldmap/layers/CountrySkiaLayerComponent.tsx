@@ -1,12 +1,16 @@
-import { Canvas, Group, ImageSVG, Skia, useValue, Paint } from '@shopify/react-native-skia';
+import { Canvas, Group, Image, PaintStyle, Skia, SkImage } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, TouchableOpacity, Text, Dimensions } from 'react-native';
+import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, runOnJS, useDerivedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useDerivedValue, useSharedValue } from 'react-native-reanimated';
 import { useMapContext } from '../WorldMapMainComponent';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+// Rasterization scale for high-quality rendering
+// 5x provides crisp detail up to 5x zoom with acceptable quality to 10x max zoom
+const RASTER_SCALE = 5;
 
 interface CountrySkiaLayerComponentProps {
   countryCode: string | null;
@@ -261,12 +265,114 @@ const COUNTRY_SVG_MAP: Record<string, any> = {
  * CountrySkiaLayerComponent - Renders detailed country SVG using Skia
  * Shows detailed state/province boundaries when a country is selected
  */
+/**
+ * Parse SVG path elements from SVG text
+ * Extracts all <path d="..." /> elements and returns their path data
+ */
+const parseSVGPaths = (svgText: string): string[] => {
+  const pathRegex = /<path[^>]*\sd="([^"]*)"/g;
+  const paths: string[] = [];
+  let match;
+
+  while ((match = pathRegex.exec(svgText)) !== null) {
+    if (match[1]) {
+      paths.push(match[1]);
+    }
+  }
+
+  console.log(`Parsed ${paths.length} paths from SVG`);
+  return paths;
+};
+
+/**
+ * Create a Skia Image from SVG path data
+ * Uses PictureRecorder to capture drawing operations at high resolution,
+ * then converts to GPU-cached image for crisp rendering when zoomed
+ */
+const createImageFromPaths = (
+  pathDataArray: string[],
+  width: number,
+  height: number
+): SkImage | null => {
+  if (pathDataArray.length === 0) {
+    console.warn('No paths to render');
+    return null;
+  }
+
+  // Scale dimensions for high-quality rasterization
+  const rasterWidth = width * RASTER_SCALE;
+  const rasterHeight = height * RASTER_SCALE;
+
+  const recorder = Skia.PictureRecorder();
+  const canvas = recorder.beginRecording({
+    x: 0,
+    y: 0,
+    width: rasterWidth,
+    height: rasterHeight
+  });
+
+  // Scale the canvas to draw at higher resolution
+  canvas.scale(RASTER_SCALE, RASTER_SCALE);
+
+  // Create paint for fill (yellow)
+  const fillPaint = Skia.Paint();
+  fillPaint.setColor(Skia.Color('#FFEB3B')); // Yellow
+  fillPaint.setStyle(PaintStyle.Fill);
+  fillPaint.setAntiAlias(true);
+
+  // Create paint for stroke (black)
+  // Scale stroke width proportionally to maintain visual appearance
+  const strokePaint = Skia.Paint();
+  strokePaint.setColor(Skia.Color('#000000')); // Black
+  strokePaint.setStyle(PaintStyle.Stroke);
+  strokePaint.setStrokeWidth(0.5); // Will be rendered at 2.5 due to canvas scale
+  strokePaint.setAntiAlias(true);
+
+  // Draw each path
+  let successCount = 0;
+  pathDataArray.forEach((pathData, index) => {
+    try {
+      const path = Skia.Path.MakeFromSVGString(pathData);
+      if (path) {
+        // Draw fill first, then stroke on top
+        canvas.drawPath(path, fillPaint);
+        canvas.drawPath(path, strokePaint);
+        successCount++;
+      }
+    } catch (error) {
+      console.warn(`Failed to create path ${index}:`, error);
+    }
+  });
+
+  console.log(`Successfully drew ${successCount}/${pathDataArray.length} paths at ${RASTER_SCALE}x resolution`);
+
+  const picture = recorder.finishRecordingAsPicture();
+
+  // Convert Picture to Image (GPU texture) for better performance
+  // Create a surface at high resolution, draw the picture, and snapshot
+  const surface = Skia.Surface.Make(Math.ceil(rasterWidth), Math.ceil(rasterHeight));
+
+  if (!surface) {
+    console.error('Failed to create surface for image conversion');
+    return null;
+  }
+
+  const canvas2 = surface.getCanvas();
+  canvas2.drawPicture(picture);
+
+  // Get the high-resolution image from the surface
+  const image = surface.makeImageSnapshot();
+
+  return image;
+};
+
 export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps> = ({
   countryCode,
 }) => {
   const { setSelectedCountryCode } = useMapContext();
   const [svgData, setSvgData] = useState<string | null>(null);
-  const [svgDom, setSvgDom] = useState<any>(null);
+  const [image, setImage] = useState<SkImage | null>(null);
+  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
 
   // Local transform state - independent from WebView map
   const localX = useSharedValue(0);
@@ -350,7 +456,8 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
   useEffect(() => {
     if (!countryCode) {
       setSvgData(null);
-      setSvgDom(null);
+      setImage(null);
+      setImageDimensions(null);
       return;
     }
 
@@ -362,7 +469,8 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
         if (!svgRequire) {
           console.warn(`No detailed SVG available for country: ${countryCode}`);
           setSvgData(null);
-          setSvgDom(null);
+          setImage(null);
+          setImageDimensions(null);
           return;
         }
 
@@ -371,34 +479,48 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
         await asset.downloadAsync();
 
         const response = await fetch(asset.uri);
-        let svgText = await response.text();
-
-        // Style the SVG: add yellow fill and black stroke to all paths
-        svgText = svgText.replace(
-          /<path/g,
-          '<path fill="#FFEB3B" stroke="#000000" stroke-width="0.5"'
-        );
+        const svgText = await response.text();
 
         setSvgData(svgText);
 
-        // Parse SVG with Skia
-        const svg = Skia.SVG.MakeFromString(svgText);
-        setSvgDom(svg);
+        // First, parse the SVG to get dimensions from viewBox or width/height
+        const viewBoxMatch = svgText.match(/viewBox="([^"]*)"/);
+        const widthMatch = svgText.match(/width="([^"]*)"/);
+        const heightMatch = svgText.match(/height="([^"]*)"/);
 
-        console.log(`Loaded detailed SVG for country: ${countryCode}`);
+        let svgWidth = 1000; // default fallback
+        let svgHeight = 1000;
 
-        // Initialize transform to center and fit the SVG on screen
-        if (svg) {
-          const svgWidth = svg.width();
-          const svgHeight = svg.height();
+        if (viewBoxMatch) {
+          const viewBoxValues = viewBoxMatch[1].split(/\s+/);
+          if (viewBoxValues.length === 4) {
+            svgWidth = parseFloat(viewBoxValues[2]);
+            svgHeight = parseFloat(viewBoxValues[3]);
+          }
+        } else if (widthMatch && heightMatch) {
+          svgWidth = parseFloat(widthMatch[1]);
+          svgHeight = parseFloat(heightMatch[1]);
+        }
 
-          // Calculate scale to fit the SVG on screen (with some padding)
+        console.log(`SVG dimensions for ${countryCode}: ${svgWidth} x ${svgHeight}`);
+
+        // Parse SVG paths and create GPU-cached Image
+        const pathDataArray = parseSVGPaths(svgText);
+        const createdImage = createImageFromPaths(pathDataArray, svgWidth, svgHeight);
+
+        if (createdImage) {
+          setImage(createdImage);
+          setImageDimensions({ width: svgWidth, height: svgHeight });
+
+          console.log(`Created GPU-cached Image for country: ${countryCode}`);
+
+          // Initialize transform to center and fit the image on screen
           const padding = 40; // pixels of padding
           const scaleX = (screenWidth - padding * 2) / svgWidth;
           const scaleY = (screenHeight - padding * 2) / svgHeight;
           const initialScale = Math.min(scaleX, scaleY);
 
-          // Center the SVG on screen
+          // Center the image on screen
           const scaledWidth = svgWidth * initialScale;
           const scaledHeight = svgHeight * initialScale;
           const initialX = (screenWidth - scaledWidth) / 2;
@@ -410,23 +532,28 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
           localScale.value = initialScale;
 
           console.log(`Initialized country transform:`, {
-            svgDims: [svgWidth, svgHeight],
+            imageDims: [svgWidth, svgHeight],
             scale: initialScale,
             position: [initialX, initialY],
           });
+        } else {
+          console.error('Failed to create Image from SVG paths');
+          setImage(null);
+          setImageDimensions(null);
         }
       } catch (error) {
         console.error(`Error loading SVG for country ${countryCode}:`, error);
         setSvgData(null);
-        setSvgDom(null);
+        setImage(null);
+        setImageDimensions(null);
       }
     };
 
     loadCountrySvg();
   }, [countryCode]);
 
-  // Don't render if no country is selected or SVG hasn't loaded
-  if (!countryCode || !svgDom) {
+  // Don't render if no country is selected or Image hasn't loaded
+  if (!countryCode || !image || !imageDimensions) {
     return null;
   }
 
@@ -436,12 +563,13 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
         <Animated.View style={styles.canvas}>
           <Canvas style={styles.canvas}>
             <Group transform={transform}>
-              <ImageSVG
-                svg={svgDom}
+              <Image
+                image={image}
                 x={0}
                 y={0}
-                width={svgDom.width()}
-                height={svgDom.height()}
+                width={imageDimensions.width}
+                height={imageDimensions.height}
+                fit="contain"
               />
             </Group>
           </Canvas>
