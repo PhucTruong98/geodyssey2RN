@@ -1,14 +1,15 @@
 import { useMapStore } from '@/store';
-import { Canvas, Group, Image, PaintStyle, Skia, SkImage } from '@shopify/react-native-skia';
+import { Canvas, Group, Image, PaintStyle, Path, Skia, SkImage } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   runOnJS,
   useDerivedValue,
   useSharedValue,
-  withDecay
+  withDecay,
+  withSpring
 } from 'react-native-reanimated';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -23,18 +24,24 @@ const RASTER_SCALE = 35;
 
 // Function to parse SVG path and calculate bounding box
 const getPathBoundingBox = (pathData: string) => {
-  const coords = pathData.match(/(-?\d+\.?\d*),(-?\d+\.?\d*)/g);
-  if (!coords || coords.length === 0) return null;
+  // Extract all numbers from the path (coordinates are space or comma separated)
+  const numbers = pathData.match(/-?\d+\.?\d*/g);
+  if (!numbers || numbers.length < 2) return null;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
-  coords.forEach(coord => {
-    const [x, y] = coord.split(',').map(Number);
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  });
+  // Process pairs of numbers as (x, y) coordinates
+  for (let i = 0; i < numbers.length - 1; i += 2) {
+    const x = parseFloat(numbers[i]);
+    const y = parseFloat(numbers[i + 1]);
+
+    if (!isNaN(x) && !isNaN(y)) {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
 
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 };
@@ -173,7 +180,12 @@ export const SkiaWorldMap: React.FC = () => {
                 if (skiaPath) {
                   // Calculate bounding box for viewport culling
                   const bbox = getPathBoundingBox(pathData);
-                  paths.push({ id: countryId, d: pathData, path: skiaPath, bbox });
+                  if (bbox) {
+                    paths.push({ id: countryId, d: pathData, path: skiaPath, bbox });
+                  } else {
+                    console.warn(`No bbox for country: ${countryId}`);
+                    paths.push({ id: countryId, d: pathData, path: skiaPath, bbox: null });
+                  }
                 }
               }
             }
@@ -202,32 +214,100 @@ export const SkiaWorldMap: React.FC = () => {
     loadMapData();
   }, []);
 
-  // Function to zoom to a specific country
-  const zoomToCountry = (countryId: string, pathData: string) => {
-    const bbox = getPathBoundingBox(pathData);
+  // Function to convert screen coordinates to map coordinates
+  const screenToMapCoords = (screenX: number, screenY: number) => {
+    const currentScale = skiaScale.value;
+    const currentTranslateX = skiaTranslateX.value;
+    const currentTranslateY = skiaTranslateY.value;
+
+    // Convert screen point to map coordinates
+    // The map coordinates are in the original SVG space (0-500 x 0-241)
+    const mapX = (screenX - currentTranslateX) / currentScale;
+    const mapY = (screenY - currentTranslateY) / currentScale;
+
+    console.log(`Screen (${screenX.toFixed(0)}, ${screenY.toFixed(0)}) → Map (${mapX.toFixed(2)}, ${mapY.toFixed(2)})`);
+    return { mapX, mapY };
+  };
+
+  // Function to find which country was clicked
+  const findCountryAtPoint = (mapX: number, mapY: number) => {
+    // Check each country path to see if it contains the point
+    for (const country of countryPaths) {
+      if (country.path && country.path.contains(mapX, mapY)) {
+        return country;
+      }
+    }
+    return null;
+  };
+
+  // Function to zoom to a specific country with animation
+  const zoomToCountry = (countryId: string, bbox: any) => {
     if (!bbox) return;
 
-    const scaleX = (screenWidth - 0) / bbox.width / initialScale;
-    const scaleY = (screenHeight - 0) / bbox.height / initialScale;
+    // Calculate scale to fit country on screen with some padding
+    const padding = 0;
+    const scaleX = (screenWidth - padding * 2) / bbox.width;
+    const scaleY = (screenHeight - padding * 2) / bbox.height;
     const newScale = Math.min(scaleX, scaleY);
 
-    const translateX = -bbox.minX * initialScale * newScale;
-    const translateY = -bbox.minY * initialScale * newScale;
+    // Calculate center of country in map coordinates
+    const countryCenterX = bbox.minX + bbox.width / 2;
+    const countryCenterY = bbox.minY + bbox.height / 2;
 
-    // Update shared values directly
-    skiaScale.value = newScale;
-    skiaTranslateX.value = translateX;
-    skiaTranslateY.value = translateY;
+    // Calculate translation to center the country on screen
+    const translateX = screenWidth / 2 - countryCenterX * newScale;
+    const translateY = screenHeight / 2 - countryCenterY * newScale;
+
+    // Animate to new values with spring animation
+    skiaScale.value = withSpring(newScale, {
+      damping: 20,
+      stiffness: 90,
+      mass: 1,
+    }, (finished) => {
+      if (finished) {
+        runOnJS(setScale)(newScale);
+      }
+    });
+
+    skiaTranslateX.value = withSpring(translateX, {
+      damping: 20,
+      stiffness: 90,
+      mass: 1,
+    }, (finished) => {
+      if (finished) {
+        runOnJS(setTranslate)(translateX, translateY);
+      }
+    });
+
+    skiaTranslateY.value = withSpring(translateY, {
+      damping: 20,
+      stiffness: 90,
+      mass: 1,
+    });
 
     // Update base values
     baseTranslateX.value = translateX;
     baseTranslateY.value = translateY;
+    baseScale.value = newScale;
 
-    // Update store
-    setScale(newScale);
-    setTranslate(translateX, translateY);
+    console.log(`🗺️ Zooming to country: ${countryId}`);
+  };
 
-    console.log(`Skia zooming to country: ${countryId}`);
+  // Handle tap to detect country click
+  const handleTap = (x: number, y: number) => {
+    const { mapX, mapY } = screenToMapCoords(x, y);
+    const country = findCountryAtPoint(mapX, mapY);
+
+    if (country) {
+      console.log(`🖱️ Clicked country: ${country.id}`, country.bbox);
+      if (country.bbox) {
+        zoomToCountry(country.id, country.bbox);
+      } else {
+        console.warn(`⚠️ Country ${country.id} has no bbox data - cannot zoom`);
+      }
+    } else {
+      console.log('🖱️ Clicked on ocean');
+    }
   };
 
   const pinchGesture = Gesture.Pinch()
@@ -353,7 +433,31 @@ export const SkiaWorldMap: React.FC = () => {
       baseTranslateY.value = skiaTranslateY.value;
     });
 
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+  // Tap gesture to detect country clicks
+  const tapGesture = Gesture.Tap()
+    .onEnd((event) => {
+      runOnJS(handleTap)(event.x, event.y);
+    });
+
+  // Combine all gestures - tap should not interfere with pan/pinch
+  const composedGesture = Gesture.Race(
+    Gesture.Simultaneous(pinchGesture, panGesture),
+    tapGesture
+  );
+
+
+  // Create invisible hit-testing paths for tap detection
+  // These paths are transparent but still detect hits via the handleTap function
+  const countryElements = useMemo(() => {
+    return countryPaths.map((country) => (
+      <Path
+        key={country.id}
+        path={country.path}
+        color="transparent"
+        style="fill"
+      />
+    ));
+  }, [countryPaths]);
 
   // Use useDerivedValue to create transform array on UI thread
   const transform = useDerivedValue(() => {
@@ -368,7 +472,7 @@ export const SkiaWorldMap: React.FC = () => {
     <GestureDetector gesture={composedGesture}>
       <Canvas style={{ flex: 1 }}>
         <Group transform={transform}>
-          {/* Render high-resolution world map image */}
+          {/* Render high-resolution world map image (visible) */}
           {worldMapImage && (
             <Image
               image={worldMapImage}
@@ -379,6 +483,8 @@ export const SkiaWorldMap: React.FC = () => {
               fit="fill"
             />
           )}
+
+          {/* Render invisible country paths for hit-testing */}
         </Group>
       </Canvas>
     </GestureDetector>
