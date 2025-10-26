@@ -1,7 +1,7 @@
 import { useMapStore } from '@/store';
-import { Canvas, Group, Path, Skia } from '@shopify/react-native-skia';
+import { Canvas, Group, Image, PaintStyle, Skia, SkImage } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
@@ -16,6 +16,10 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 // SVG map dimensions
 const MAP_WIDTH = 500;
 const MAP_HEIGHT = 241;
+
+// Rasterization scale for ultra-high quality rendering
+// 18x provides crisp detail up to 18x zoom with acceptable quality to 20x max zoom
+const RASTER_SCALE = 35;
 
 // Function to parse SVG path and calculate bounding box
 const getPathBoundingBox = (pathData: string) => {
@@ -35,9 +39,90 @@ const getPathBoundingBox = (pathData: string) => {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 };
 
+/**
+ * Create a high-resolution world map image from country paths
+ * Uses PictureRecorder to draw all countries once, then rasterizes to GPU-cached image
+ */
+const createWorldMapImage = (
+  countryPaths: {id: string, d: string, path: any, bbox: any}[]
+): SkImage | null => {
+  if (countryPaths.length === 0) {
+    console.warn('No country paths to render');
+    return null;
+  }
+
+  // Scale dimensions for high-quality rasterization
+  const rasterWidth = MAP_WIDTH * RASTER_SCALE;
+  const rasterHeight = MAP_HEIGHT * RASTER_SCALE;
+
+  const recorder = Skia.PictureRecorder();
+  const canvas = recorder.beginRecording({
+    x: 0,
+    y: 0,
+    width: rasterWidth,
+    height: rasterHeight
+  });
+
+  // Scale the canvas to draw at higher resolution
+  canvas.scale(RASTER_SCALE, RASTER_SCALE);
+
+  // Draw ocean background
+  const oceanPath = Skia.Path.Make();
+  oceanPath.addRect({ x: 0, y: 0, width: MAP_WIDTH, height: MAP_HEIGHT });
+  const oceanPaint = Skia.Paint();
+  oceanPaint.setColor(Skia.Color('rgb(109, 204, 236)')); // Ocean blue
+  oceanPaint.setStyle(PaintStyle.Fill);
+  canvas.drawPath(oceanPath, oceanPaint);
+
+  // Create paint for land fill (yellow)
+  const fillPaint = Skia.Paint();
+  fillPaint.setColor(Skia.Color('#FFFFE0')); // Light yellow
+  fillPaint.setStyle(PaintStyle.Fill);
+  fillPaint.setAntiAlias(true);
+
+  // Create paint for country borders (black)
+  const strokePaint = Skia.Paint();
+  strokePaint.setColor(Skia.Color('#000000')); // Black
+  strokePaint.setStyle(PaintStyle.Stroke);
+  strokePaint.setStrokeWidth(0.05); // Will be scaled by canvas
+  strokePaint.setAntiAlias(true);
+
+  // Draw all countries
+  countryPaths.forEach((country) => {
+    if (country.path) {
+      // Draw fill first, then stroke on top
+      canvas.drawPath(country.path, fillPaint);
+      canvas.drawPath(country.path, strokePaint);
+    }
+  });
+
+  console.log(`Drew ${countryPaths.length} countries at ${RASTER_SCALE}x resolution`);
+
+  const picture = recorder.finishRecordingAsPicture();
+
+  // Convert Picture to Image (GPU texture) for better performance
+  // Create a surface at high resolution, draw the picture, and snapshot
+  const surface = Skia.Surface.Make(Math.ceil(rasterWidth), Math.ceil(rasterHeight));
+
+  if (!surface) {
+    console.error('Failed to create surface for world map image conversion');
+    return null;
+  }
+
+  const canvas2 = surface.getCanvas();
+  canvas2.drawPicture(picture);
+
+  // Get the high-resolution image from the surface
+  const image = surface.makeImageSnapshot();
+
+  console.log('✅ Created GPU-cached world map image');
+  return image;
+};
+
 export const SkiaWorldMap: React.FC = () => {
   const { scale, translateX, translateY, setScale, setTranslate } = useMapStore();
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any, bbox: any}[]>([]);
+  const [worldMapImage, setWorldMapImage] = useState<SkImage | null>(null);
 
   // Use shared values for UI thread rendering
   const skiaScale = useSharedValue(Math.max(scale, 1.0));
@@ -96,6 +181,12 @@ export const SkiaWorldMap: React.FC = () => {
 
           setCountryPaths(paths);
           console.log(`Loaded ${paths.length} Skia country paths`);
+
+          // Create high-resolution world map image from paths
+          const mapImage = createWorldMapImage(paths);
+          if (mapImage) {
+            setWorldMapImage(mapImage);
+          }
         } else {
           throw new Error(`Failed to fetch SVG: ${response.status}`);
         }
@@ -104,6 +195,7 @@ export const SkiaWorldMap: React.FC = () => {
       } catch (error) {
         console.error('Error loading Skia map data:', error);
         setCountryPaths([]);
+        setWorldMapImage(null);
       }
     };
 
@@ -148,7 +240,7 @@ export const SkiaWorldMap: React.FC = () => {
     })
     .onUpdate(event => {
       // Constrain zoom: minimum is initialScale, maximum is 5x
-      const newScale = Math.max(initialScale, Math.min(20, baseScale.value * event.scale));
+      const newScale = Math.max(initialScale, Math.min(30, baseScale.value * event.scale));
 
       // Calculate the focal point position in map coordinates using the base values from onStart
       const mapPointX = (focalX.value - baseTranslateX.value) / baseScale.value;
@@ -272,31 +364,21 @@ export const SkiaWorldMap: React.FC = () => {
     ];
   }, []);
 
-  // Memoize country path components to prevent re-renders
-  const countryElements = useMemo(() => {
-    return countryPaths.map((country) => (
-      <React.Fragment key={country.id}>
-              {<Path path={country.path} color="#FFFFE0" style="fill" />}
-              {<Path path={country.path} color="#000000" style="stroke" strokeWidth={0.01} />}
-
-
-            </React.Fragment>
-
-    ));
-  }, [countryPaths]);
-
   return (
     <GestureDetector gesture={composedGesture}>
       <Canvas style={{ flex: 1 }}>
         <Group transform={transform}>
-          {/* Ocean background */}
-          <Path
-            path={`M0,0 L${MAP_WIDTH},0 L${MAP_WIDTH},${MAP_HEIGHT} L0,${MAP_HEIGHT} Z`}
-            color="rgb(109, 204, 236)"
-          />
-
-          {/* Render all countries */}
-          {countryElements}
+          {/* Render high-resolution world map image */}
+          {worldMapImage && (
+            <Image
+              image={worldMapImage}
+              x={0}
+              y={0}
+              width={MAP_WIDTH}
+              height={MAP_HEIGHT}
+              fit="fill"
+            />
+          )}
         </Group>
       </Canvas>
     </GestureDetector>

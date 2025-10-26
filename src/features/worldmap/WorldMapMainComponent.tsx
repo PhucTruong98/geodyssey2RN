@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { useMapTransform } from './hooks/useMapTransform';
 import { CountrySkiaLayerComponent } from './layers/CountrySkiaLayerComponent';
 import { WorldMapCountryLabelsLayer } from './layers/WorldMapCountryLabelsLayer';
-import { WorldMapSVGLayer } from './layers/WorldMapSVGLayer';
+import { SkiaWorldMap } from './SkiaWorldMap';
 
 /**
  * Main container component for the world map
@@ -33,7 +33,9 @@ export const WorldMapMainComponent: React.FC = () => {
     >
       <View style={styles.container}>
         {/* Base map layer */}
-        <WorldMapSVGLayer />
+        {/* <WorldMapSVGLayer/> */}
+        <SkiaWorldMap></SkiaWorldMap>
+
 
         {/* Detailed country layer (Skia) - shown when country is selected */}
         <CountrySkiaLayerComponent countryCode={selectedCountryCode} />
