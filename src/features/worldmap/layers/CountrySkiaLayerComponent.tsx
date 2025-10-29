@@ -3,7 +3,7 @@ import { Asset } from 'expo-asset';
 import React, { useEffect, useState } from 'react';
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useDerivedValue, useSharedValue } from 'react-native-reanimated';
+import Animated, { useDerivedValue, useSharedValue, withDecay } from 'react-native-reanimated';
 import { useMapContext } from '../WorldMapMainComponent';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -439,10 +439,42 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
       localX.value = Math.max(minTranslateX, Math.min(maxTranslateX, newTranslateX));
       localY.value = Math.max(minTranslateY, Math.min(maxTranslateY, newTranslateY));
     })
-    .onEnd(() => {
+    .onEnd((event) => {
       'worklet';
+
+
+      const currentScale = localScale.value;
+      const scaledMapWidth = imageWidth.value * currentScale;
+      const scaledMapHeight = imageHeight.value * currentScale;
+      let minTranslateX, maxTranslateX, minTranslateY, maxTranslateY;
+
+      let padding = 100;
+
+      minTranslateX =  - scaledMapWidth + padding; // Left edge limit
+      maxTranslateX = screenWidthShared.value - padding; // Right edge limit
+ 
+
+      // Image taller than screen - constrain vertically
+      minTranslateY =  - scaledMapHeight + padding; // Top edge limit
+      maxTranslateY = screenHeightShared.value - padding; // Bottom edge limit
+ 
+      // Apply momentum with decay animation
+      localX.value = withDecay({
+        velocity: event.velocityX,
+        clamp: [minTranslateX, maxTranslateX],
+        deceleration: 0.998,
+      });
+
+      localY.value = withDecay({
+        velocity: event.velocityY,
+        clamp: [minTranslateY, maxTranslateY],
+        deceleration: 0.998,
+      });
+
       savedX.value = localX.value;
       savedY.value = localY.value;
+
+
     });
 
   // Pinch gesture - update local scale
