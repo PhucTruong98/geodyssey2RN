@@ -3,7 +3,7 @@ import { Asset } from 'expo-asset';
 import React, { useEffect, useState } from 'react';
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useDerivedValue, useSharedValue } from 'react-native-reanimated';
+import Animated, { useDerivedValue, useSharedValue } from 'react-native-reanimated';
 import { useMapContext } from '../WorldMapMainComponent';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -384,60 +384,122 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
   const savedY = useSharedValue(0);
   const savedScale = useSharedValue(1);
 
+  const focalX = useSharedValue(0);
+  const focalY = useSharedValue(0);
+
+  // Store image dimensions as shared values for worklet access
+  const imageWidth = useSharedValue(1000);
+  const imageHeight = useSharedValue(1000);
+
+  // Store screen dimensions as shared values for worklet access
+  const screenWidthShared = useSharedValue(screenWidth);
+  const screenHeightShared = useSharedValue(screenHeight);
+
   // Handle close button press - return to world map view
   const handleClose = () => {
     setSelectedCountryCode(null);
   };
 
-  // Helper functions for logging (must use runOnJS in gesture handlers)
-  const logPanChange = (x: number, y: number) => {
-    console.log('👆 Pan translationX/Y:', x, y);
-  };
-
-  const logPinchChange = (scale: number) => {
-    console.log('🤏 Pinch scale:', scale);
-  };
-
   // Pan gesture - update local transform
   const panGesture = Gesture.Pan()
+    .maxPointers(1)
     .onStart(() => {
-      console.log('🟢 Pan gesture started');
+      'worklet';
       savedX.value = localX.value;
       savedY.value = localY.value;
     })
     .onUpdate((event) => {
       'worklet';
-      runOnJS(logPanChange)(event.translationX, event.translationY);
-      localX.value = savedX.value + event.translationX;
-      localY.value = savedY.value + event.translationY;
+      const newTranslateX = savedX.value + event.translationX;
+      const newTranslateY = savedY.value + event.translationY;
+
+      // Calculate current scaled dimensions
+      const currentScale = localScale.value;
+      const scaledWidth = imageWidth.value * currentScale;
+      const scaledHeight = imageHeight.value * currentScale;
+
+      // Calculate boundaries to prevent panning off screen
+      // When image is larger than screen, constrain so image edges don't go past screen edges
+      // When image is smaller than screen, allow centering
+      let minTranslateX, maxTranslateX, minTranslateY, maxTranslateY;
+
+      let padding = 100;
+
+
+        minTranslateX =  - scaledWidth + padding; // Left edge limit
+        maxTranslateX = screenWidthShared.value - padding; // Right edge limit
+   
+
+        // Image taller than screen - constrain vertically
+        minTranslateY =  - scaledHeight + padding; // Top edge limit
+        maxTranslateY = screenHeightShared.value - padding; // Bottom edge limit
+    
+
+      // Apply constraints
+      localX.value = Math.max(minTranslateX, Math.min(maxTranslateX, newTranslateX));
+      localY.value = Math.max(minTranslateY, Math.min(maxTranslateY, newTranslateY));
     })
     .onEnd(() => {
-      console.log('🔴 Pan gesture ended');
+      'worklet';
+      savedX.value = localX.value;
+      savedY.value = localY.value;
     });
 
   // Pinch gesture - update local scale
   const pinchGesture = Gesture.Pinch()
-    .onStart(() => {
-      console.log('🟢 Pinch gesture started');
+    .onStart((event) => {
+      'worklet';
       savedScale.value = localScale.value;
+      savedX.value = localX.value;
+      savedY.value = localY.value;
+      focalX.value = event.focalX;
+      focalY.value = event.focalY;
     })
     .onUpdate((event) => {
       'worklet';
-      runOnJS(logPinchChange)(event.scale);
 
-      // Scale around the focal point
-      const newScale = savedScale.value * event.scale;
+      // Calculate new scale with limits
+      const minScale = 0.5;
+      const maxScale = 30;
+      const newScale = Math.max(minScale, Math.min(maxScale, savedScale.value * event.scale));
 
-      // Apply scale limits (reasonable zoom range)
-      const minScale = 0.5;  // Can zoom out to 50%
-      const maxScale = 10;   // Can zoom in to 10x
+      // Calculate the focal point position in image coordinates using SAVED values from onStart
+      const imagePointX = (focalX.value - savedX.value) / savedScale.value;
+      const imagePointY = (focalY.value - savedY.value) / savedScale.value;
 
-      if (newScale >= minScale && newScale <= maxScale) {
-        localScale.value = newScale;
-      }
+      // Calculate new translation to keep the focal point fixed on screen
+      const newTranslateX = focalX.value - imagePointX * newScale;
+      const newTranslateY = focalY.value - imagePointY * newScale;
+
+      // Calculate actual rendered image dimensions using shared values
+      const scaledWidth = imageWidth.value * newScale;
+      const scaledHeight = imageHeight.value * newScale;
+
+      // Calculate proper boundaries to keep image on screen
+      const minTranslateX = screenWidthShared.value - scaledWidth;
+      const maxTranslateX = 0;
+      const minTranslateY = screenHeightShared.value - scaledHeight;
+      const maxTranslateY = 0;
+
+      // Constrain translation
+      // const constrainedX = Math.max(minTranslateX, Math.min(maxTranslateX, newTranslateX));
+      // const constrainedY = Math.max(minTranslateY, Math.min(maxTranslateY, newTranslateY));
+
+      // Update shared values on UI thread
+      localScale.value = newScale;
+      localX.value = newTranslateX;
+      localY.value = newTranslateY;
     })
     .onEnd(() => {
-      console.log('🔴 Pinch gesture ended');
+      'worklet';
+      const finalScale = localScale.value;
+      const finalX = localX.value;
+      const finalY = localY.value;
+
+      // Update saved values for next gesture
+      savedScale.value = finalScale;
+      savedX.value = finalX;
+      savedY.value = finalY;
     });
 
   // Combine gestures - allow simultaneous pan and pinch
@@ -512,10 +574,14 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
           setImage(createdImage);
           setImageDimensions({ width: svgWidth, height: svgHeight });
 
+          // Update shared values for worklet access
+          imageWidth.value = svgWidth;
+          imageHeight.value = svgHeight;
+
           console.log(`Created GPU-cached Image for country: ${countryCode}`);
 
           // Initialize transform to center and fit the image on screen
-          const padding = 40; // pixels of padding
+          const padding = 0; // pixels of padding
           const scaleX = (screenWidth - padding * 2) / svgWidth;
           const scaleY = (screenHeight - padding * 2) / svgHeight;
           const initialScale = Math.min(scaleX, scaleY);
@@ -530,6 +596,11 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
           localX.value = initialX;
           localY.value = initialY;
           localScale.value = initialScale;
+
+          // Update saved values for gestures
+          savedX.value = initialX;
+          savedY.value = initialY;
+          savedScale.value = initialScale;
 
           console.log(`Initialized country transform:`, {
             imageDims: [svgWidth, svgHeight],

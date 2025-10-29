@@ -1,4 +1,3 @@
-import { useMapStore } from '@/store';
 import { Canvas, Group, Image, PaintStyle, Path, Skia, SkImage } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -11,6 +10,7 @@ import {
   withDecay,
   withSpring
 } from 'react-native-reanimated';
+import { useMapContext } from './WorldMapMainComponent';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -127,22 +127,22 @@ const createWorldMapImage = (
 };
 
 export const SkiaWorldMap: React.FC = () => {
-  const { scale, translateX, translateY, setScale, setTranslate } = useMapStore();
+  const { transform: contextTransform, constants, setSelectedCountryCode } = useMapContext();
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any, bbox: any}[]>([]);
   const [worldMapImage, setWorldMapImage] = useState<SkImage | null>(null);
 
-  // Use shared values for UI thread rendering
-  const skiaScale = useSharedValue(Math.max(scale, 1.0));
-  const skiaTranslateX = useSharedValue(translateX);
-  const skiaTranslateY = useSharedValue(translateY);
+  // Use context's shared values for UI thread rendering
+  const skiaScale = contextTransform.scale;
+  const skiaTranslateX = contextTransform.x;
+  const skiaTranslateY = contextTransform.y;
 
   const baseScale = useSharedValue(1);
-  const baseTranslateX = useSharedValue(translateX);
-  const baseTranslateY = useSharedValue(translateY);
+  const baseTranslateX = useSharedValue(0);
+  const baseTranslateY = useSharedValue(0);
   const focalX = useSharedValue(0);
   const focalY = useSharedValue(0);
 
-  const initialScale = screenHeight / MAP_HEIGHT;
+  const initialScale = constants.initialScale;
   const aspectRatio = MAP_WIDTH / MAP_HEIGHT;
   const minScale = 1.0;
 
@@ -263,20 +263,12 @@ export const SkiaWorldMap: React.FC = () => {
       damping: 20,
       stiffness: 90,
       mass: 1,
-    }, (finished) => {
-      if (finished) {
-        runOnJS(setScale)(newScale);
-      }
     });
 
     skiaTranslateX.value = withSpring(translateX, {
       damping: 20,
       stiffness: 90,
       mass: 1,
-    }, (finished) => {
-      if (finished) {
-        runOnJS(setTranslate)(translateX, translateY);
-      }
     });
 
     skiaTranslateY.value = withSpring(translateY, {
@@ -285,7 +277,7 @@ export const SkiaWorldMap: React.FC = () => {
       mass: 1,
     });
 
-    // Update base values
+    // Update base values for next gesture
     baseTranslateX.value = translateX;
     baseTranslateY.value = translateY;
     baseScale.value = newScale;
@@ -300,6 +292,10 @@ export const SkiaWorldMap: React.FC = () => {
 
     if (country) {
       console.log(`🖱️ Clicked country: ${country.id}`, country.bbox);
+
+      // Set selected country to show detailed CountrySkiaLayer
+      setSelectedCountryCode(country.id);
+
       if (country.bbox) {
         zoomToCountry(country.id, country.bbox);
       } else {
@@ -307,6 +303,8 @@ export const SkiaWorldMap: React.FC = () => {
       }
     } else {
       console.log('🖱️ Clicked on ocean');
+      // Clear selection when clicking on ocean
+      setSelectedCountryCode(null);
     }
   };
 
@@ -357,10 +355,6 @@ export const SkiaWorldMap: React.FC = () => {
       baseTranslateX.value = finalX;
       baseTranslateY.value = finalY;
       baseScale.value = finalScale;
-
-      // Update store only at the end
-      runOnJS(setScale)(finalScale);
-      runOnJS(setTranslate)(finalX, finalY);
     });
 
   const panGesture = Gesture.Pan()
@@ -413,20 +407,12 @@ export const SkiaWorldMap: React.FC = () => {
         velocity: event.velocityX,
         clamp: [minTranslateX, maxTranslateX],
         deceleration: 0.998,
-      }, (finished) => {
-        if (finished) {
-          runOnJS(setTranslate)(skiaTranslateX.value, skiaTranslateY.value);
-        }
       });
 
       skiaTranslateY.value = withDecay({
         velocity: event.velocityY,
         clamp: [minTranslateY, maxTranslateY],
         deceleration: 0.998,
-      }, (finished) => {
-        if (finished) {
-          runOnJS(setTranslate)(skiaTranslateX.value, skiaTranslateY.value);
-        }
       });
 
       baseTranslateX.value = skiaTranslateX.value;
