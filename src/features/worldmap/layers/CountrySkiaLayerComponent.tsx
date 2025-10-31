@@ -1,9 +1,9 @@
-import { Canvas, Group, Image, PaintStyle, Skia, SkImage } from '@shopify/react-native-skia';
+import { BackdropFilter, Blur, Canvas, Group, Image, Paint, PaintStyle, Rect, Skia, SkImage } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
 import React, { useEffect, useState } from 'react';
-import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useDerivedValue, useSharedValue, withDecay } from 'react-native-reanimated';
+import Animated, { runOnJS, useDerivedValue, useSharedValue, withDecay } from 'react-native-reanimated';
 import { useMapContext } from '../WorldMapMainComponent';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -395,6 +395,9 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
   const screenWidthShared = useSharedValue(screenWidth);
   const screenHeightShared = useSharedValue(screenHeight);
 
+  // Store initial scale as shared value for worklet access
+  const initialScaleShared = useSharedValue(1);
+
   // Handle close button press - return to world map view
   const handleClose = () => {
     setSelectedCountryCode(null);
@@ -491,7 +494,7 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
       'worklet';
 
       // Calculate new scale with limits
-      const minScale = 0.5;
+      const minScale = 0.1;
       const maxScale = 30;
       const newScale = Math.max(minScale, Math.min(maxScale, savedScale.value * event.scale));
 
@@ -517,6 +520,10 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
       // const constrainedX = Math.max(minTranslateX, Math.min(maxTranslateX, newTranslateX));
       // const constrainedY = Math.max(minTranslateY, Math.min(maxTranslateY, newTranslateY));
 
+            // Auto-close if zoomed out below 80% of initial scale
+            if (newScale < initialScaleShared.value * 0.8) {
+              runOnJS(handleClose)();
+            }
       // Update shared values on UI thread
       localScale.value = newScale;
       localX.value = newTranslateX;
@@ -532,6 +539,8 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
       savedScale.value = finalScale;
       savedX.value = finalX;
       savedY.value = finalY;
+
+
     });
 
   // Combine gestures - allow simultaneous pan and pinch
@@ -634,6 +643,9 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
           savedY.value = initialY;
           savedScale.value = initialScale;
 
+          // Store initial scale for auto-close detection
+          initialScaleShared.value = initialScale;
+
           console.log(`Initialized country transform:`, {
             imageDims: [svgWidth, svgHeight],
             scale: initialScale,
@@ -661,9 +673,23 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
   }
 
   return (
-    <View style={styles.container} pointerEvents="auto">
+    <View style={styles.container} pointerEvents="box-none">
+      {/* Blurred backdrop using Skia BackdropFilter */}
+      <Canvas style={styles.backdropCanvas} pointerEvents="none">
+        <BackdropFilter filter={<Blur blur={20} />}>
+          <Rect
+            x={0}
+            y={0}
+            width={screenWidth}
+            height={screenHeight}
+            color="rgba(0, 0, 0, 0.5)"
+          />
+        </BackdropFilter>
+      </Canvas>
+
+      {/* Country detail layer with gestures */}
       <GestureDetector gesture={combinedGesture}>
-        <Animated.View style={styles.canvas}>
+        <Animated.View style={styles.canvas} pointerEvents="auto">
           <Canvas style={styles.canvas}>
             <Group transform={transform}>
               <Image
@@ -694,6 +720,14 @@ export const CountrySkiaLayerComponent: React.FC<CountrySkiaLayerComponentProps>
 const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+  },
+  backdropCanvas: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   canvas: {
     flex: 1,
