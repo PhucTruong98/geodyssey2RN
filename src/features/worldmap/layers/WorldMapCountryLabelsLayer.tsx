@@ -1,7 +1,7 @@
-import { Canvas, Group, Paint, Rect, Text, matchFont } from '@shopify/react-native-skia';
-import React, { useMemo, useState } from 'react';
+import { Canvas, Group, matchFont, Picture, Skia, SkPicture } from '@shopify/react-native-skia';
+import React, { useEffect, useMemo } from 'react';
 import { Dimensions, Platform, StyleSheet } from 'react-native';
-import Animated, { runOnJS, useAnimatedReaction, useDerivedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useDerivedValue, useSharedValue } from 'react-native-reanimated';
 import { useMapContext } from '../WorldMapMainComponent';
 
 // Import centroid data generated from calculate-centroids.js script
@@ -33,6 +33,49 @@ interface CountryCentroid {
   height: number;
 }
 
+interface LabelPicture {
+  id: string;
+  picture: SkPicture;
+  x: number;
+  y: number;
+  area: number;
+}
+
+/**
+ * Create a Skia Picture for a text label
+ * This pre-renders the text once, which can then be GPU-cached and repositioned
+ */
+const createLabelPicture = (text: string, font: any, color: string): SkPicture => {
+  const recorder = Skia.PictureRecorder();
+
+  // Measure text to get dimensions
+  const textWidth = font.getTextWidth(text);
+  const fontSize = font.getSize();
+
+  // Add padding around text
+  const padding = 2;
+  const width = textWidth + padding * 2;
+  const height = fontSize + padding * 2;
+
+  const canvas = recorder.beginRecording({
+    x: 0,
+    y: 0,
+    width,
+    height,
+  });
+
+  // Create paint for text
+  const paint = Skia.Paint();
+  paint.setColor(Skia.Color(color));
+  paint.setAntiAlias(true);
+
+  // Draw text (centered in the picture bounds)
+  canvas.drawText(text, padding, padding + fontSize * 0.8, paint, font);
+
+  // Finish recording and return the picture
+  return recorder.finishRecordingAsPicture();
+};
+
 /**
  * Country Labels Layer - Renders country ID labels using Skia
  * Features:
@@ -49,41 +92,57 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
     return countryCentroidsData as CountryCentroid[];
   }, []);
 
-  // Create font for labels - use matchFont which works
-  // const font = useMemo(() => {
-  //   try {
-  //     const f = matchFont({ fontSize: FONT_SIZE });
-  //     if (f) {
-  //       console.log('🏷️ Font created successfully with matchFont');
-  //       console.log('🏷️ Font details:', {
-  //         size: f.getSize(),
-  //         typeface: f.getTypeface()
-  //       });
-  //       return f;
-  //     }
-  //     console.error('matchFont returned null');
-  //     return null;
-  //   } catch (error) {
-  //     console.error('Font creation failed:', error);
-  //     return null;
-  //   }
-  // }, []);
+  // Create font for label Pictures
+  const font = useMemo(() => {
+    const fontFamily = Platform.select({
+      ios: "Helvetica",
+      android: "sans-serif",
+      default: "Arial"
+    });
 
-  const fontFamily = Platform.select({ ios: "Helvetica", default: "serif" });
-const fontStyle = {
-  fontFamily,
-  fontSize: 2,
-  fontStyle: "italic",
-  fontWeight: "bold",
-};
-const font = matchFont(fontStyle);
+    const fontStyle = {
+      fontFamily,
+      fontSize: 12,  // Font size for pre-rendered Pictures
+      fontWeight: "bold" as const,
+    };
 
-  // State for visible countries - updated when zoom/pan changes
+    return matchFont(fontStyle);
+  }, []);
+
+  // State for pre-rendered label Pictures
+  const [labelPictures, setLabelPictures] = React.useState<LabelPicture[]>([]);
+
+  // SharedValue for visible countries - updated on UI thread when zoom/pan changes
   // Initialize with large countries to show something immediately
-  const [visibleCountries, setVisibleCountries] = useState<CountryCentroid[]>(() => {
-    // Show the largest countries initially
-    return countryCentroids.filter(c => c.area > AREA_THRESHOLDS.LARGE).slice(0, 20);
-  });
+  const visibleCountries = useSharedValue<CountryCentroid[]>(
+    countryCentroids.filter(c => c.area > AREA_THRESHOLDS.LARGE).slice(0, 20)
+  );
+
+  // Pre-render all label Pictures at startup
+  useEffect(() => {
+    if (!font) return;
+
+    console.log('🏷️ Pre-rendering label Pictures...');
+    const pictures: LabelPicture[] = [];
+
+    for (const country of countryCentroids) {
+      try {
+        const picture = createLabelPicture(country.id, font, LABEL_COLOR);
+        pictures.push({
+          id: country.id,
+          picture,
+          x: country.x,
+          y: country.y,
+          area: country.area,
+        });
+      } catch (error) {
+        console.error(`Failed to create picture for ${country.id}:`, error);
+      }
+    }
+
+    setLabelPictures(pictures);
+    console.log(`✅ Pre-rendered ${pictures.length} label Pictures`);
+  }, [font, countryCentroids]);
 
   // React to transform changes and update visible labels
   useAnimatedReaction(
@@ -99,14 +158,14 @@ const font = matchFont(fontStyle);
       const { scale, tx, ty } = current;
 
       // Only update if values changed significantly (optimize performance)
-      if (
-        previous &&
-        Math.abs(scale - previous.scale) < 0.01 &&
-        Math.abs(tx - previous.tx) < 5 &&
-        Math.abs(ty - previous.ty) < 5
-      ) {
-        return;
-      }
+      // if (
+      //   previous &&
+      //   Math.abs(scale - previous.scale) < 0.01 &&
+      //   Math.abs(tx - previous.tx) < 5 &&
+      //   Math.abs(ty - previous.ty) < 5
+      // ) {
+      //   return;
+      // }
 
       // Determine area threshold based on zoom level
       const zoomRatio = scale / constants.initialScale;
@@ -126,7 +185,7 @@ const font = matchFont(fontStyle);
       const minY = (-ty / scale) - VIEWPORT_MARGIN;
       const maxY = ((screenHeight - ty) / scale) + VIEWPORT_MARGIN;
 
-      // Filter countries by size and viewport
+      // Filter label pictures by size and viewport
       const filtered = countryCentroids.filter((country) => {
         if (country.area < areaThreshold) return false;
         if (country.x < minX || country.x > maxX) return false;
@@ -134,8 +193,8 @@ const font = matchFont(fontStyle);
         return true;
       });
 
-      // Update state on JS thread
-      runOnJS(setVisibleCountries)(filtered);
+      // Update shared value directly on UI thread (no JS bridge)
+      visibleCountries.value = filtered;
     },
     [countryCentroids, constants.initialScale]
   );
@@ -149,60 +208,48 @@ const font = matchFont(fontStyle);
     ];
   }, [transform.x, transform.y, transform.scale]);
 
-  // Memoize label elements based on visible countries
-  // Note: We render labels without inverse scaling for now (font will scale with map)
-  // This is simpler and still readable at most zoom levels
+  // Create a map for quick Picture lookup
+  const pictureMap = useMemo(() => {
+    const map = new Map<string, SkPicture>();
+    for (const label of labelPictures) {
+      map.set(label.id, label.picture);
+    }
+    return map;
+  }, [labelPictures]);
+
+  // Create label elements using useMemo with pictureMap and labelPictures dependencies
+  // Read visibleCountries.value directly to get latest UI-thread state
+  // Don't include visibleCountries in dependencies since it's a SharedValue (reference doesn't change)
   const labelElements = useMemo(() => {
-    return visibleCountries.map((country) => (
-      <Text
-        key={country.id}
-        x={country.x}
-        y={country.y}
-        text={country.id}
-        font={font}
-      >
-        <Paint color={LABEL_COLOR} />
-        {/* <Rect x={country.x} y={country.y} width={5} height={5} color="#FF0000" /> */}
+    if (labelPictures.length === 0) return null;
 
-      </Text>
-    ));
-  }, [visibleCountries, font]);
+    return visibleCountries.value.map((country) => {
+      const picture = pictureMap.get(country.id);
+      if (!picture) return null;
 
-  // Don't render if font failed to load
-  if (!font) {
-    console.error('Font is null, cannot render labels');
+      return (
+        <Group
+          key={country.id}
+          // Position the picture at country centroid
+          transform={[
+            { translateX: country.x },
+            { translateY: country.y },
+          ]}
+        >
+          <Picture picture={picture} />
+        </Group>
+      );
+    }).filter(Boolean);
+  }, [pictureMap, labelPictures]);
+
+  // Don't render if font failed to load or Pictures not ready
+  if (!font || labelPictures.length === 0) {
     return null;
   }
-
-  // Debug platform info
-  console.log('🏷️ Platform:', Platform.OS);
-  console.log('🏷️ Font object:', font);
 
   return (
     <Animated.View style={styles.container} pointerEvents="none">
       <Canvas style={styles.canvas}>
-        {/* Debug: Draw a small red rectangle to verify Canvas is rendering */}
-        <Rect x={10} y={10} width={50} height={50} color="#FF0000" />
-
-        {/* Test Text with Paint child component */}
-        <Text
-          x={100}
-          y={100}
-          text="HELLO WORLD"
-          font={font}
-        >
-          <Paint color="red" />
-        </Text>
-
-        {/* Test Text without any color prop */}
-        <Text
-          x={100}
-          y={150}
-          text="NO COLOR"
-          font={font}
-        />
-
-        {/* Original labels with transform */}
         <Group transform={groupTransform}>
           {labelElements}
         </Group>
