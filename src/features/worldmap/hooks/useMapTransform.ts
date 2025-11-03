@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Dimensions } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
+import { CountryCentroid } from '../utils/calculateCentroids';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -31,6 +32,8 @@ export const useMapTransform = () => {
   // const initialScale = screenHeight / MAP_HEIGHT;
   const initialScale = (screenHeight * 1000 / 482) / screenWidth
 
+  // State for centroids (calculated once from SVG paths)
+  const [centroids, setCentroids] = useState<CountryCentroid[]>([]);
 
   // Shared values for transform (no React re-renders during gestures)
   const x = useSharedValue(0);
@@ -107,6 +110,10 @@ export const useMapTransform = () => {
       MAP_HEIGHT,
       initialScale,
     },
+
+    // Centroids calculated from SVG paths
+    centroids,
+    setCentroids,
 
     // Utility functions
     utils,

@@ -11,6 +11,7 @@ import {
   withSpring
 } from 'react-native-reanimated';
 import { useMapContext } from './WorldMapMainComponent';
+import { calculateCentroids } from './utils/calculateCentroids';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -43,7 +44,10 @@ const getPathBoundingBox = (pathData: string) => {
     }
   }
 
-  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  return { minX, minY, maxX, maxY, width, height };
 };
 
 /**
@@ -127,7 +131,7 @@ const createWorldMapImage = (
 };
 
 export const SkiaWorldMap: React.FC = () => {
-  const { transform: contextTransform, constants, setSelectedCountryCode } = useMapContext();
+  const { transform: contextTransform, constants, setSelectedCountryCode, setCentroids } = useMapContext();
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any, bbox: any}[]>([]);
   const [worldMapImage, setWorldMapImage] = useState<SkImage | null>(null);
 
@@ -193,6 +197,11 @@ export const SkiaWorldMap: React.FC = () => {
 
           setCountryPaths(paths);
           console.log(`Loaded ${paths.length} Skia country paths`);
+
+          // Calculate centroids from paths with bboxes
+          const calculatedCentroids = calculateCentroids(paths);
+          setCentroids(calculatedCentroids);
+          console.log(`Calculated centroids for ${calculatedCentroids.length} countries`);
 
           // Create high-resolution world map image from paths
           const mapImage = createWorldMapImage(paths);

@@ -1,11 +1,8 @@
 import { Canvas, Group, matchFont, Picture, Skia, SkPicture } from '@shopify/react-native-skia';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Dimensions, Platform, StyleSheet } from 'react-native';
 import Animated, { useAnimatedReaction, useDerivedValue, useSharedValue } from 'react-native-reanimated';
 import { useMapContext } from '../WorldMapMainComponent';
-
-// Import centroid data generated from calculate-centroids.js script
-import countryCentroidsData from '../../../assets/data/country-centroids.json';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -85,12 +82,15 @@ const createLabelPicture = (text: string, font: any, color: string): SkPicture =
  * - Performance optimized: Typically renders 10-50 labels instead of 200+
  */
 export const WorldMapCountryLabelsLayer: React.FC = () => {
-  const { transform, constants } = useMapContext();
+  const context = useMapContext() as any;
+  const { transform, constants } = context;
+  const countryCentroids: CountryCentroid[] = context.centroids || [];
 
-  // Parse centroid data (typed for safety)
-  const countryCentroids = useMemo<CountryCentroid[]>(() => {
-    return countryCentroidsData as CountryCentroid[];
-  }, []);
+  // SharedValue to hold centroids for access in worklets (Reanimated-safe)
+  const centroidsSharedValue = useSharedValue<CountryCentroid[]>(countryCentroids);
+  React.useEffect(() => {
+    centroidsSharedValue.value = countryCentroids;
+  }, [countryCentroids, centroidsSharedValue]);
 
   // Create font for label Pictures
   const font = useMemo(() => {
@@ -113,14 +113,12 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
   const [labelPictures, setLabelPictures] = React.useState<LabelPicture[]>([]);
 
   // SharedValue for visible countries - updated on UI thread when zoom/pan changes
-  // Initialize with large countries to show something immediately
-  const visibleCountries = useSharedValue<CountryCentroid[]>(
-    countryCentroids.filter(c => c.area > AREA_THRESHOLDS.LARGE).slice(0, 20)
-  );
+  // Initialize empty, will be populated when centroids load
+  const visibleCountries = useSharedValue<CountryCentroid[]>([]);
 
   // Pre-render all label Pictures at startup
   useEffect(() => {
-    if (!font) return;
+    if (!font || countryCentroids.length === 0) return;
 
     console.log('🏷️ Pre-rendering label Pictures...');
     const pictures: LabelPicture[] = [];
@@ -140,8 +138,13 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
       }
     }
 
+
+
     setLabelPictures(pictures);
     console.log(`✅ Pre-rendered ${pictures.length} label Pictures`);
+ 
+    // Initialize visible countries with large countries
+    visibleCountries.value = countryCentroids.filter(c => c.area > AREA_THRESHOLDS.LARGE).slice(0, 20);
   }, [font, countryCentroids]);
 
   // React to transform changes and update visible labels
@@ -158,14 +161,14 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
       const { scale, tx, ty } = current;
 
       // Only update if values changed significantly (optimize performance)
-      // if (
-      //   previous &&
-      //   Math.abs(scale - previous.scale) < 0.01 &&
-      //   Math.abs(tx - previous.tx) < 5 &&
-      //   Math.abs(ty - previous.ty) < 5
-      // ) {
-      //   return;
-      // }
+      if (
+        previous &&
+        Math.abs(scale - previous.scale) < 0.01 &&
+        Math.abs(tx - previous.tx) < 5 &&
+        Math.abs(ty - previous.ty) < 5
+      ) {
+        return;
+      }
 
       // Determine area threshold based on zoom level
       const zoomRatio = scale / constants.initialScale;
@@ -186,7 +189,8 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
       const maxY = ((screenHeight - ty) / scale) + VIEWPORT_MARGIN;
 
       // Filter label pictures by size and viewport
-      const filtered = countryCentroids.filter((country) => {
+      // Access centroids from shared value (Reanimated-safe)
+      const filtered = (centroidsSharedValue.value || []).filter((country: any) => {
         if (country.area < areaThreshold) return false;
         if (country.x < minX || country.x > maxX) return false;
         if (country.y < minY || country.y > maxY) return false;
@@ -195,9 +199,79 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
 
       // Update shared value directly on UI thread (no JS bridge)
       visibleCountries.value = filtered;
+      console.log('🔍 Filtered countries:', visibleCountries.value);
     },
-    [countryCentroids, constants.initialScale]
+    [centroidsSharedValue, constants.initialScale]
   );
+
+  // State to trigger debug effect at regular intervals
+  const [debugTrigger, setDebugTrigger] = useState(0);
+
+  // Monitor transform changes and trigger debug effect
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Update trigger to force useEffect to run
+      setDebugTrigger(prev => (prev + 1) % 1000);
+    }, 100); // Run every 100ms (10 times per second)
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // DEBUGGABLE: useEffect version of the label filtering logic (runs on JS thread)
+  // Use this when you need to debug the filtering logic with breakpoints
+  // useEffect(() => {
+  //   const scale = transform.scale.value;
+  //   const tx = transform.x.value;
+  //   const ty = transform.y.value;
+
+  //   // Only update if values changed significantly (optimize performance)
+  //   // (Skip the throttling check for now - comment this back in if needed)
+
+  //   // Determine area threshold based on zoom level
+  //   const zoomRatio = scale / constants.initialScale;
+
+  //   let areaThreshold: number;
+  //   if (zoomRatio < 1.5) {
+  //     areaThreshold = AREA_THRESHOLDS.LARGE;
+  //   } else if (zoomRatio < 3.0) {
+  //     areaThreshold = AREA_THRESHOLDS.MEDIUM;
+  //   } else {
+  //     areaThreshold = AREA_THRESHOLDS.SMALL;
+  //   }
+
+  //   // Calculate visible bounds in map coordinates
+  //   const minX = (-tx / scale) - VIEWPORT_MARGIN;
+  //   const maxX = ((screenWidth - tx) / scale) + VIEWPORT_MARGIN;
+  //   const minY = (-ty / scale) - VIEWPORT_MARGIN;
+  //   const maxY = ((screenHeight - ty) / scale) + VIEWPORT_MARGIN;
+
+  //   console.log('🔍 JS Thread Filtering:', {
+  //     scale,
+  //     tx,
+  //     ty,
+  //     zoomRatio,
+  //     areaThreshold,
+  //     bounds: { minX, maxX, minY, maxY },
+  //     totalCentroids: countryCentroids.length,
+  //   });
+
+  //   // Filter label pictures by size and viewport
+  //   const filtered = countryCentroids.filter((country) => {
+  //     if (country.area < areaThreshold) return false;
+  //     if (country.x < minX || country.x > maxX) return false;
+  //     if (country.y < minY || country.y > maxY) return false;
+  //     return true;
+  //   });
+
+  //   console.log('✅ Filtered countries:', filtered.length, filtered.map(c => c.id).slice(0, 5));
+
+  //   // Update shared value
+  //   visibleCountries.value = filtered;
+  // }, [debugTrigger]);
+
+
+
+
 
   // Create transform using useDerivedValue for proper Skia integration
   const groupTransform = useDerivedValue(() => {
@@ -223,7 +297,7 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
   const labelElements = useMemo(() => {
     if (labelPictures.length === 0) return null;
 
-    return visibleCountries.value.map((country) => {
+    return countryCentroids.map((country) => {
       const picture = pictureMap.get(country.id);
       if (!picture) return null;
 
@@ -240,7 +314,7 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
         </Group>
       );
     }).filter(Boolean);
-  }, [pictureMap, labelPictures]);
+  }, [pictureMap, labelPictures, visibleCountries.value]);
 
   // Don't render if font failed to load or Pictures not ready
   if (!font || labelPictures.length === 0) {

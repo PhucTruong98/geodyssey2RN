@@ -12,6 +12,7 @@ import { SkiaWorldMap } from './SkiaWorldMap';
 export const WorldMapMainComponent: React.FC = () => {
   const mapTransform = useMapTransform();
   const [selectedCountryCode, setSelectedCountryCode] = useState<string | null>(null);
+
   const styles = StyleSheet.create({
     container: { flex: 1 },
     overlay: {
@@ -27,10 +28,13 @@ export const WorldMapMainComponent: React.FC = () => {
         transform: mapTransform.transform,
         constants: mapTransform.constants,
         utils: mapTransform.utils,
+        centroids: mapTransform.centroids,
+        setCentroids: mapTransform.setCentroids,
         selectedCountryCode,
         setSelectedCountryCode,
       }}
     >
+      
       <View style={styles.container}>
         {/* Base map layer */}
         {/* <WorldMapSVGLayer/> */}
@@ -77,6 +81,8 @@ export const MapContext = React.createContext<{
     getVisibleBounds: (screenWidth: number, screenHeight: number, scale: number, x: number, y: number) => any;
     isPointVisible: (mapX: number, mapY: number, screenWidth: number, screenHeight: number, scale: number, x: number, y: number) => boolean;
   };
+  centroids: any[];
+  setCentroids: (centroids: any[]) => void;
   selectedCountryCode: string | null;
   setSelectedCountryCode: (countryCode: string | null) => void;
 } | null>(null);
