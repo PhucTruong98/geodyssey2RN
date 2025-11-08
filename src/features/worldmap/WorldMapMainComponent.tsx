@@ -34,19 +34,21 @@ export const WorldMapMainComponent: React.FC = () => {
         setSelectedCountryCode,
       }}
     >
-      
+
       <View style={styles.container}>
         {/* Base map layer */}
         {/* <WorldMapSVGLayer/> */}
         <SkiaWorldMap></SkiaWorldMap>
+                {/* <WorldMap></WorldMap> */}
 
+                <View style={styles.overlay} pointerEvents="box-none">
+          <WorldMapCountryLabelsLayer />
+        </View>
 
         {/* Detailed country layer (Skia) - shown when country is selected */}
         <CountrySkiaLayerComponent countryCode={selectedCountryCode} />
 
-        <View style={styles.overlay} pointerEvents="box-none">
-          <WorldMapCountryLabelsLayer />
-        </View>
+
 
         {/* Future layers can be added here */}
       </View>
