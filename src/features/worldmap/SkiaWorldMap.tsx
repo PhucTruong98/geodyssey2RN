@@ -1,10 +1,11 @@
-import { Canvas, Group, Image, PaintStyle, Path, Skia, SkImage } from '@shopify/react-native-skia';
+import { Canvas, Group, Image, matchFont, PaintStyle, Path, Skia, SkImage, Text } from '@shopify/react-native-skia';
 import { Asset } from 'expo-asset';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Dimensions } from 'react-native';
+import { Dimensions, Platform } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   runOnJS,
+  useAnimatedReaction,
   useDerivedValue,
   useSharedValue,
   withDecay,
@@ -22,6 +23,20 @@ const MAP_HEIGHT = 241;
 // Rasterization scale for ultra-high quality rendering
 // 18x provides crisp detail up to 18x zoom with acceptable quality to 20x max zoom
 const RASTER_SCALE = 35;
+
+// Country labels configuration
+const LABEL_FONT_SIZE = 12;
+const LABEL_COLOR = '#FF0000';
+const VIEWPORT_MARGIN = 0;
+
+// Area thresholds for zoom-based filtering
+const AREA_THRESHOLDS = {
+  EXTRA_LARGE: 2000,
+  LARGE: 700,
+  MEDIUM: 150,
+  SMALL: 10,
+  EXTRA_SMALL: 1,
+};
 
 // Function to parse SVG path and calculate bounding box
 const getPathBoundingBox = (pathData: string) => {
@@ -131,9 +146,11 @@ const createWorldMapImage = (
 };
 
 export const SkiaWorldMap: React.FC = () => {
-  const { transform: contextTransform, constants, setSelectedCountryCode, setCentroids } = useMapContext();
+  console.log('📍 SkiaWorldMap mounted/rendered');
+  const { transform: contextTransform, constants, shouldRerender, centroids, setSelectedCountryCode, setCentroids } = useMapContext();
   const [countryPaths, setCountryPaths] = useState<{id: string, d: string, path: any, bbox: any}[]>([]);
   const [worldMapImage, setWorldMapImage] = useState<SkImage | null>(null);
+  const [renderedLabels, setRenderedLabels] = useState<any[]>([]);
 
   // Use context's shared values for UI thread rendering
   const skiaScale = contextTransform.scale;
@@ -146,9 +163,111 @@ export const SkiaWorldMap: React.FC = () => {
   const focalX = useSharedValue(0);
   const focalY = useSharedValue(0);
 
+  // Track previous transform values for throttle detection
+  const prevScale = useSharedValue(1);
+  const prevTranslateX = useSharedValue(0);
+  const prevTranslateY = useSharedValue(0);
+
+  // Throttle thresholds
+  const SCALE_THROTTLE = 0.3;
+  const TRANSLATION_THROTTLE = 0;
+
   const initialScale = constants.initialScale;
   const aspectRatio = MAP_WIDTH / MAP_HEIGHT;
   const minScale = 1.0;
+
+  // Create Skia font for labels using matchFont (works outside Canvas)
+  const skiaFont = useMemo(() => {
+    try {
+      const font = matchFont({
+        fontSize: LABEL_FONT_SIZE,
+      });
+      console.log('🎨 Created skiaFont:', font);
+      return font;
+    } catch (e) {
+      console.error('❌ Failed to create font:', e);
+      return null;
+    }
+  }, []);
+
+
+    // Create font for label Pictures
+    const testFont = useMemo(() => {
+      const fontFamily = Platform.select({
+        ios: "Helvetica",
+        android: "sans-serif",
+        default: "Arial"
+      });
+  
+      const fontStyle = {
+        fontFamily,
+        fontSize: 12,  // Font size for pre-rendered Pictures
+        fontWeight: "bold" as const,
+        color: "red"
+      };
+  
+      return matchFont(fontStyle);
+    }, []);
+
+  // Calculate visible labels - recomputes on every frame but filters efficiently
+  const visibleLabels = useDerivedValue(() => {
+    if (!centroids || centroids.length === 0) {
+      return [];
+    }
+
+    const scale = skiaScale.value;
+    const tx = skiaTranslateX.value;
+    const ty = skiaTranslateY.value;
+    const zoomRatio = scale / initialScale;
+
+    // Determine area threshold based on zoom level
+    let areaThreshold: number;
+    if (zoomRatio < 1.2) {
+      areaThreshold = AREA_THRESHOLDS.EXTRA_LARGE;
+    } else if (zoomRatio < 2.0) {
+      areaThreshold = AREA_THRESHOLDS.LARGE;
+    } else if (zoomRatio < 3.5) {
+      areaThreshold = AREA_THRESHOLDS.MEDIUM;
+    } else if (zoomRatio < 6.0) {
+      areaThreshold = AREA_THRESHOLDS.SMALL;
+    } else {
+      areaThreshold = AREA_THRESHOLDS.EXTRA_SMALL;
+    }
+
+    // Calculate visible bounds in map coordinates
+    const minX = (-tx / scale) - VIEWPORT_MARGIN;
+    const maxX = ((screenWidth - tx) / scale) + VIEWPORT_MARGIN;
+    const minY = (-ty / scale) - VIEWPORT_MARGIN;
+    const maxY = ((screenHeight - ty) / scale) + VIEWPORT_MARGIN;
+
+    // Filter and calculate visible labels
+     let ret = centroids
+      .filter((country: any) => {
+        if (country.area < areaThreshold) return false;
+        if (country.x < minX || country.x > maxX) return false;
+        if (country.y < minY || country.y > maxY) return false;
+        return true;
+      })
+      .map((country: any) => ({
+        ...country,
+        screenX: country.x * scale + tx,
+        screenY: country.y * scale + ty,
+      }));
+
+      if (ret.length > 0) {
+        console.log('✅ visibleLabels has', ret.length, 'labels. First:', ret[0].id, 'at', ret[0].screenX, ret[0].screenY);
+      }
+      return ret
+  });
+
+  // Bridge Reanimated SharedValue to React state so useMemo detects changes
+  useAnimatedReaction(
+    () => visibleLabels.value,
+    (labels) => {
+      runOnJS(setRenderedLabels)(labels);
+    },
+    []
+  );
 
   // Load map data and convert to Skia paths
   useEffect(() => {
@@ -196,12 +315,14 @@ export const SkiaWorldMap: React.FC = () => {
           }
 
           setCountryPaths(paths);
-          console.log(`Loaded ${paths.length} Skia country paths`);
 
           // Calculate centroids from paths with bboxes
           const calculatedCentroids = calculateCentroids(paths);
+          console.log('✅ Calculated centroids:', calculatedCentroids.length);
+          if (calculatedCentroids.length > 0) {
+            console.log('✅ First centroid:', calculatedCentroids[0]);
+          }
           setCentroids(calculatedCentroids);
-          console.log(`Calculated centroids for ${calculatedCentroids.length} countries`);
 
           // Create high-resolution world map image from paths
           const mapImage = createWorldMapImage(paths);
@@ -324,6 +445,10 @@ export const SkiaWorldMap: React.FC = () => {
       baseTranslateY.value = skiaTranslateY.value;
       focalX.value = event.focalX;
       focalY.value = event.focalY;
+      // Initialize previous values on first pinch
+      prevScale.value = skiaScale.value;
+      prevTranslateX.value = skiaTranslateX.value;
+      prevTranslateY.value = skiaTranslateY.value;
     })
     .onUpdate(event => {
       // Constrain zoom: minimum is initialScale, maximum is 5x
@@ -354,6 +479,16 @@ export const SkiaWorldMap: React.FC = () => {
       skiaScale.value = newScale;
       skiaTranslateX.value = constrainedX;
       skiaTranslateY.value = constrainedY;
+
+      // Check if transform changed significantly for throttle
+      const scaleDiff = Math.abs(newScale - prevScale.value);
+      if (scaleDiff >= SCALE_THROTTLE) {
+        shouldRerender.value = (shouldRerender.value + 1) % 500; // Increment counter, reset at 500
+        console.log("Should rerender Value:", shouldRerender.value)
+        prevScale.value = newScale;
+        prevTranslateX.value = constrainedX;
+        prevTranslateY.value = constrainedY;
+      }
     })
     .onEnd(() => {
       const finalScale = skiaScale.value;
@@ -364,6 +499,11 @@ export const SkiaWorldMap: React.FC = () => {
       baseTranslateX.value = finalX;
       baseTranslateY.value = finalY;
       baseScale.value = finalScale;
+
+      // Update prev values for next gesture
+      prevScale.value = finalScale;
+      prevTranslateX.value = finalX;
+      prevTranslateY.value = finalY;
     });
 
   const panGesture = Gesture.Pan()
@@ -371,6 +511,9 @@ export const SkiaWorldMap: React.FC = () => {
     .onStart(() => {
       baseTranslateX.value = skiaTranslateX.value;
       baseTranslateY.value = skiaTranslateY.value;
+      // Initialize previous values on pan start
+      prevTranslateX.value = skiaTranslateX.value;
+      prevTranslateY.value = skiaTranslateY.value;
     })
     .onUpdate(event => {
       const currentScale = skiaScale.value;
@@ -400,6 +543,21 @@ export const SkiaWorldMap: React.FC = () => {
       // Update shared values directly on UI thread
       skiaTranslateX.value = constrainedX;
       skiaTranslateY.value = constrainedY;
+
+      // Check if translation changed significantly for throttle
+      const txDiff = Math.abs(constrainedX - prevTranslateX.value);
+      const tyDiff = Math.abs(constrainedY - prevTranslateY.value);
+
+
+
+      if (txDiff >= TRANSLATION_THROTTLE || tyDiff >= TRANSLATION_THROTTLE) {
+        shouldRerender.value = (shouldRerender.value + 1) % 500; // Increment counter, reset at 500
+        // console.log("Should rerender Value:", shouldRerender.value)
+
+
+        prevTranslateX.value = constrainedX;
+        prevTranslateY.value = constrainedY;
+      }
     })
     .onEnd(event => {
       const currentScale = skiaScale.value;
@@ -426,6 +584,10 @@ export const SkiaWorldMap: React.FC = () => {
 
       baseTranslateX.value = skiaTranslateX.value;
       baseTranslateY.value = skiaTranslateY.value;
+
+      // Update prev values for momentum phase
+      prevTranslateX.value = skiaTranslateX.value;
+      prevTranslateY.value = skiaTranslateY.value;
     });
 
   // Tap gesture to detect country clicks
@@ -440,6 +602,40 @@ export const SkiaWorldMap: React.FC = () => {
     tapGesture
   );
 
+
+  // Create label elements from visible labels
+  const labelElements = useMemo(() => {
+    console.log('🏷️ Creating label elements - count:', renderedLabels.length);
+    const elements = renderedLabels.map((label: any) => {
+      const x = label.screenX - LABEL_FONT_SIZE / 2;
+      const y = label.screenY - LABEL_FONT_SIZE / 2;
+
+      const children = [];
+
+
+
+      // Label text - only if font is loaded
+      if (testFont) {
+        children.push(
+          <Text
+            key={`text-${label.id}`}
+            text={label.id}
+            font={testFont}
+            x={x + 5}
+            y={y + 2}
+          />
+        );
+      }
+
+      return (
+        <React.Fragment key={label.id}>
+          {children}
+        </React.Fragment>
+      );
+    });
+    console.log('🏷️ Created', elements.length, 'label elements');
+    return elements;
+  }, [renderedLabels, skiaFont]);
 
   // Create invisible hit-testing paths for tap detection
   // These paths are transparent but still detect hits via the handleTap function
@@ -481,6 +677,9 @@ export const SkiaWorldMap: React.FC = () => {
 
           {/* Render invisible country paths for hit-testing */}
         </Group>
+
+        {/* Render country labels OUTSIDE the Group so they don't get transformed */}
+        {labelElements}
       </Canvas>
     </GestureDetector>
   );

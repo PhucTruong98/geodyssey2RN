@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useMapTransform } from './hooks/useMapTransform';
 import { CountrySkiaLayerComponent } from './layers/CountrySkiaLayerComponent';
-import { WorldMapCountryLabelsLayer } from './layers/WorldMapCountryLabelsLayer';
 import { SkiaWorldMap } from './SkiaWorldMap';
 
 /**
@@ -30,27 +29,18 @@ export const WorldMapMainComponent: React.FC = () => {
         utils: mapTransform.utils,
         centroids: mapTransform.centroids,
         setCentroids: mapTransform.setCentroids,
+        shouldRerender: mapTransform.shouldRerender,
         selectedCountryCode,
         setSelectedCountryCode,
       }}
     >
 
       <View style={styles.container}>
-        {/* Base map layer */}
-        {/* <WorldMapSVGLayer/> */}
-        <SkiaWorldMap></SkiaWorldMap>
-                {/* <WorldMap></WorldMap> */}
-
-                <View style={styles.overlay} pointerEvents="box-none">
-          <WorldMapCountryLabelsLayer />
-        </View>
+        {/* Base map layer with country labels */}
+        <SkiaWorldMap />
 
         {/* Detailed country layer (Skia) - shown when country is selected */}
         <CountrySkiaLayerComponent countryCode={selectedCountryCode} />
-
-
-
-        {/* Future layers can be added here */}
       </View>
     </MapContext.Provider>
   );
@@ -85,6 +75,7 @@ export const MapContext = React.createContext<{
   };
   centroids: any[];
   setCentroids: (centroids: any[]) => void;
+  shouldRerender: any; // Reanimated.SharedValue<number>
   selectedCountryCode: string | null;
   setSelectedCountryCode: (countryCode: string | null) => void;
 } | null>(null);

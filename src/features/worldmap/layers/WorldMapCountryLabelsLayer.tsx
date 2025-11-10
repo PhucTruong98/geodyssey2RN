@@ -15,14 +15,14 @@ const LABEL_COLOR = '#FF0000';
 
 // Area thresholds for zoom-based filtering
 const AREA_THRESHOLDS = {
+  EXTRA_LARGE: 2000,
   LARGE: 700,
   MEDIUM: 150,
   SMALL: 10,
+  EXTRA_SMALL: 1,
 };
 
-const VIEWPORT_MARGIN = 50;
-const SCALE_THROTTLE = 0.3;
-const TRANSLATION_THROTTLE = 200;
+const VIEWPORT_MARGIN = 0;
 
 interface CountryCentroid {
   id: string;
@@ -35,13 +35,14 @@ interface CountryCentroid {
 
 /**
  * Country Labels Layer - Pure Reanimated + React
- * - Visibility filtering on JS thread (controlled via setState)
+ * - Visibility filtering triggered by shouldRerender signal from SkiaWorldMap
  * - Individual label animation on UI thread (useAnimatedStyle)
  * - No Skia overhead, simpler and more reliable
+ * - Throttle logic centralized in SkiaWorldMap for better performance
  */
 export const WorldMapCountryLabelsLayer: React.FC = () => {
   const context = useMapContext() as any;
-  const { transform, constants } = context;
+  const { transform, constants, shouldRerender } = context;
   const countryCentroids: CountryCentroid[] = context.centroids || [];
 
   // State for visible countries - controls which labels are rendered
@@ -49,28 +50,29 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
 
   // Callback to update visible countries
   const updateVisibleCountries = useCallback((
-    scale: number,
-    tx: number,
-    ty: number,
-    initialScale: number
+
   ) => {
     // Determine area threshold based on zoom level
-    const zoomRatio = scale / initialScale;
+    const zoomRatio = transform.scale.value / constants.initialScale;
 
     let areaThreshold: number;
-    if (zoomRatio < 1.5) {
+    if (zoomRatio < 1.2) {
+      areaThreshold = AREA_THRESHOLDS.EXTRA_LARGE;
+    } else if (zoomRatio < 2.0) {
       areaThreshold = AREA_THRESHOLDS.LARGE;
-    } else if (zoomRatio < 3.0) {
+    } else if (zoomRatio < 3.5) {
       areaThreshold = AREA_THRESHOLDS.MEDIUM;
-    } else {
+    } else if (zoomRatio < 6.0) {
       areaThreshold = AREA_THRESHOLDS.SMALL;
+    } else {
+      areaThreshold = AREA_THRESHOLDS.EXTRA_SMALL;
     }
 
     // Calculate visible bounds in map coordinates
-    const minX = (-tx / scale) - VIEWPORT_MARGIN;
-    const maxX = ((screenWidth - tx) / scale) + VIEWPORT_MARGIN;
-    const minY = (-ty / scale) - VIEWPORT_MARGIN;
-    const maxY = ((screenHeight - ty) / scale) + VIEWPORT_MARGIN;
+    const minX = (-transform.x.value / transform.scale.value) - VIEWPORT_MARGIN;
+    const maxX = ((screenWidth - transform.x.value) / transform.scale.value) + VIEWPORT_MARGIN;
+    const minY = (-transform.y.value / transform.scale.value) - VIEWPORT_MARGIN;
+    const maxY = ((screenHeight - transform.y.value) / transform.scale.value) + VIEWPORT_MARGIN;
 
     // Filter labels by size and viewport
     const filtered = countryCentroids.filter((country) => {
@@ -89,65 +91,20 @@ export const WorldMapCountryLabelsLayer: React.FC = () => {
     if (countryCentroids.length === 0) return;
 
     console.log('🎯 Initializing visible countries with', countryCentroids.length, 'centroids');
-    updateVisibleCountries(
-      transform.scale.value,
-      transform.x.value,
-      transform.y.value,
-      constants.initialScale
-    );
-  }, [countryCentroids.length > 0 ? countryCentroids[0]?.id : null]);
+    updateVisibleCountries();
+  }, [countryCentroids, updateVisibleCountries]);
 
-  // React to transform changes and update visible labels
+  // Watch shouldRerender signal from SkiaWorldMap for throttled updates
+  // SkiaWorldMap handles all throttle logic and toggles this when transform changes significantly
   useAnimatedReaction(
+    () => shouldRerender.value,
     () => {
-      return {
-        scale: transform.scale.value,
-        tx: transform.x.value,
-        ty: transform.y.value,
-      };
-    },
-    (current, previous) => {
       'worklet';
-      const { scale, tx, ty } = current;
-
-      // Skip first call to establish baseline
-      if (!previous) {
-        runOnJS(updateVisibleCountries)(scale, tx, ty, constants.initialScale);
-        return;
-      }
-
-      // Calculate absolute changes
-      const scaleDiff = Math.abs(scale - previous.scale);
-      const txDiff = Math.abs(tx - previous.tx);
-      const tyDiff = Math.abs(ty - previous.ty);
-
-
-
-
-
-      // Update if ANY value changed significantly
-      let shouldUpdate =
-        scaleDiff >= SCALE_THROTTLE ||
-        txDiff >= TRANSLATION_THROTTLE ||
-        tyDiff >= TRANSLATION_THROTTLE;
-
-        console.log('🔍 Transform update:', {
-          'scaleDiff': scaleDiff,
-          'txDiff': txDiff,
-          'tyDiff': tyDiff,
-          'scale': scale,
-          'tx': tx,
-          'ty': ty,
-          'previous': previous,
-          "shouldUpdate": shouldUpdate,
-        });
-
-        // shouldUpdate = true;
-      if (shouldUpdate) {
-        runOnJS(updateVisibleCountries)(scale, tx, ty, constants.initialScale);
-      }
+      // Triggered when SkiaWorldMap signals a significant transform change
+      runOnJS(updateVisibleCountries)();
+      console.log('🔄 Labels updated via shouldRerender signal');
     },
-    [constants.initialScale]
+    [updateVisibleCountries]
   );
 
   // Create individual label components

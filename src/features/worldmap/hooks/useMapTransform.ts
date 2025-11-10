@@ -40,6 +40,11 @@ export const useMapTransform = () => {
   const y = useSharedValue(0);
   const scale = useSharedValue(initialScale);
 
+  // Counter to signal when transform has changed significantly (for throttling)
+  // Increments on each significant change, resets at 500 to prevent overflow
+  // Layers watch this value to know when to update (e.g., label visibility)
+  const shouldRerender = useSharedValue(0);
+
   // Utility functions
   const utils = useMemo(() => ({
     /**
@@ -103,6 +108,9 @@ export const useMapTransform = () => {
   return {
     // Shared transform values
     transform: { x, y, scale },
+
+    // Signal for layers to detect significant transform changes
+    shouldRerender,
 
     // Constants
     constants: {
